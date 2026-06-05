@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$env:PI_CODING_AGENT_DIR = Join-Path $scriptDir ".pi/agent"
 $noEnv = $false
 $forwardArgs = New-Object System.Collections.Generic.List[string]
 

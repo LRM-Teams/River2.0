@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PI_CODING_AGENT_DIR="$SCRIPT_DIR/.pi/agent"
 
 # Check for --no-env flag
 NO_ENV=false
