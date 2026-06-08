@@ -1,0 +1,12 @@
+{
+	"name": "pi-memory-curator",
+	"private": true,
+	"type": "module",
+	"bin": {
+		"pi-memory-curator": "src/cli.ts"
+	},
+	"scripts": {
+		"test": "tsx --test test/*.test.ts"
+	},
+	"devDependencies": {}
+}

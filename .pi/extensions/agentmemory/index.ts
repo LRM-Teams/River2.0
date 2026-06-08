@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createPlaintextBearerAuthGuard } from "./security.ts";
@@ -28,13 +28,18 @@ type HealthResponse = {
     notes?: string[];
   };
 };
+type McpContentBlock = { type?: string; text?: string };
+type McpCallResponse = {
+  content?: McpContentBlock[];
+  isError?: boolean;
+};
 
 const DEFAULT_URL = process.env.AGENTMEMORY_URL || "http://localhost:3111";
 const guardPlaintextBearerAuth = createPlaintextBearerAuthGuard();
 const TOOL_GUIDANCE = [
   "agentmemory is available for cross-session memory.",
-  "Use memory_search to recall prior decisions, preferences, bugs, and workflows.",
-  "Use memory_save when you discover durable facts worth remembering beyond this session.",
+  "Use agentmemory_search to recall prior decisions, preferences, bugs, and workflows.",
+  "Use agentmemory_save when you discover durable facts worth remembering beyond this session.",
 ].join(" ");
 
 function normalizeBaseUrl(url: string): string {
@@ -85,7 +90,7 @@ function formatSearchResults(results: SmartSearchResult[]): string {
 async function callAgentMemory<T>(
   pathname: string,
   options?: {
-    method?: "GET" | "POST";
+    method?: "DELETE" | "GET" | "POST";
     body?: unknown;
     baseUrl?: string;
   },
@@ -110,6 +115,25 @@ async function callAgentMemory<T>(
   } catch {
     return null;
   }
+}
+
+async function callMcpTool(name: string, args: Record<string, unknown>): Promise<McpCallResponse | null> {
+  return await callAgentMemory<McpCallResponse>("mcp/call", {
+    body: {
+      name,
+      arguments: args,
+    },
+  });
+}
+
+function formatMcpResponse(response: McpCallResponse | null): string {
+  if (!response) return "agentmemory MCP call failed.";
+  const text = response.content
+    ?.map((block) => block.text || "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  return text || JSON.stringify(response, null, 2);
 }
 
 export default function agentmemoryExtension(pi: ExtensionAPI) {
@@ -150,7 +174,7 @@ export default function agentmemoryExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "memory_health",
+    name: "agentmemory_health",
     label: "Memory Health",
     description: "Check whether the local agentmemory server is reachable and healthy",
     parameters: Type.Object({}),
@@ -175,7 +199,7 @@ export default function agentmemoryExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "memory_search",
+    name: "agentmemory_search",
     label: "Memory Search",
     description: "Search agentmemory for cross-session project memory, prior decisions, bugs, and user preferences",
     parameters: Type.Object({
@@ -195,7 +219,7 @@ export default function agentmemoryExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "memory_save",
+    name: "agentmemory_save",
     label: "Memory Save",
     description: "Save a durable fact, convention, workflow, preference, or bug fix into agentmemory",
     parameters: Type.Object({
@@ -222,6 +246,127 @@ export default function agentmemoryExtension(pi: ExtensionAPI) {
         details: result,
       };
     },
+  });
+
+  function registerMcpTool(options: {
+    name: string;
+    mcpName: string;
+    label: string;
+    description: string;
+    parameters: TSchema;
+  }) {
+    pi.registerTool({
+      name: options.name,
+      label: options.label,
+      description: options.description,
+      parameters: options.parameters,
+      async execute(_toolCallId, params) {
+        const result = await callMcpTool(options.mcpName, params as Record<string, unknown>);
+        return {
+          content: [{ type: "text", text: formatMcpResponse(result) }],
+          details: result || { ok: false },
+          isError: result?.isError || !result,
+        };
+      },
+    });
+  }
+
+  registerMcpTool({
+    name: "agentmemory_sessions",
+    mcpName: "memory_sessions",
+    label: "Memory Sessions",
+    description: "List recent agentmemory sessions with status and observation counts.",
+    parameters: Type.Object({}),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_export",
+    mcpName: "memory_export",
+    label: "Memory Export",
+    description: "Export all agentmemory data as JSON.",
+    parameters: Type.Object({}),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_audit",
+    mcpName: "memory_audit",
+    label: "Memory Audit",
+    description: "View the agentmemory audit trail, optionally filtered by operation.",
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Number({ description: "Max entries to return; default is 50" })),
+      operation: Type.Optional(Type.String({ description: "Operation type to filter by" })),
+    }),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_governance_delete",
+    mcpName: "memory_governance_delete",
+    label: "Memory Governance Delete",
+    description: "Delete specific memories with an audit trail. Use only after the user explicitly asks to delete memory.",
+    parameters: Type.Object({
+      memoryIds: Type.String({ description: "Comma-separated memory IDs to delete" }),
+      reason: Type.Optional(Type.String({ description: "Reason for deletion" })),
+    }),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_slot_list",
+    mcpName: "memory_slot_list",
+    label: "Memory Slot List",
+    description: "List all editable agentmemory slots.",
+    parameters: Type.Object({}),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_slot_get",
+    mcpName: "memory_slot_get",
+    label: "Memory Slot Get",
+    description: "Read one editable agentmemory slot by label.",
+    parameters: Type.Object({
+      label: Type.String({ description: "Slot label, for example persona or pending_items" }),
+    }),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_slot_append",
+    mcpName: "memory_slot_append",
+    label: "Memory Slot Append",
+    description: "Append text to an editable agentmemory slot.",
+    parameters: Type.Object({
+      label: Type.String({ description: "Slot label" }),
+      text: Type.String({ description: "Text to append" }),
+    }),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_slot_replace",
+    mcpName: "memory_slot_replace",
+    label: "Memory Slot Replace",
+    description: "Replace an editable agentmemory slot. Use only when the user explicitly asks to rewrite a slot.",
+    parameters: Type.Object({
+      label: Type.String({ description: "Slot label" }),
+      content: Type.String({ description: "New full slot content" }),
+    }),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_consolidate",
+    mcpName: "memory_consolidate",
+    label: "Memory Consolidate",
+    description: "Run agentmemory consolidation across episodic, semantic, or procedural tiers.",
+    parameters: Type.Object({
+      tier: Type.Optional(Type.String({ description: "Target tier: episodic, semantic, procedural, or all" })),
+    }),
+  });
+
+  registerMcpTool({
+    name: "agentmemory_diagnose",
+    mcpName: "memory_diagnose",
+    label: "Memory Diagnose",
+    description: "Run agentmemory diagnostics across memory subsystems.",
+    parameters: Type.Object({
+      categories: Type.Optional(Type.String({ description: "Comma-separated categories to check; default is all" })),
+    }),
   });
 
   pi.on("session_start", async (_event, ctx) => {

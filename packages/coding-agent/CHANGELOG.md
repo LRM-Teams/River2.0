@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a terminal pet extension example that renders an animated editor widget reacting to agent and tool activity.
 - Added Ant Ling provider selection and setup documentation.
 - Added NVIDIA NIM provider selection, setup documentation, and direct NIM request attribution headers.
 - Added `ctx.mode` to extension contexts so extensions can distinguish TUI, RPC, JSON, and print mode.
