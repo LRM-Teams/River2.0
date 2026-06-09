@@ -1,6 +1,6 @@
 import { currentMonth, parseEntry, renderEntry, todayUtc } from "./metadata.ts";
 import type { MemoryPatch } from "./patch.ts";
-import type { MemoryTarget } from "../store/types.ts";
+import type { MemoryTarget } from "../curator-store/types.ts";
 
 export type CuratorPolicy = {
 	markTodayEvents?: boolean;

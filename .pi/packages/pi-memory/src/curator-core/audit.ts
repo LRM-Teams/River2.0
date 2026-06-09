@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { MemoryPatch } from "./patch.ts";
-import type { MemoryTarget } from "../store/types.ts";
+import type { MemoryTarget } from "../curator-store/types.ts";
 
 export interface AuditLog {
 	write(entry: AuditEntry): Promise<void>;

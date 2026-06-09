@@ -1,4 +1,4 @@
-import { MEMORY_TARGETS, type MemoryTarget } from "../store/types.ts";
+import { MEMORY_TARGETS, type MemoryTarget } from "../curator-store/types.ts";
 
 export const MEMORY_PATCH_OPERATIONS = ["replace", "append_review", "dedupe"] as const;
 

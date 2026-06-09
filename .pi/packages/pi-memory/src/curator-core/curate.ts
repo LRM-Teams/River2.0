@@ -3,7 +3,7 @@ import type { CuratorPolicy } from "./policy.ts";
 import { createLifecyclePatches } from "./policy.ts";
 import type { MemoryPatch } from "./patch.ts";
 import { validateMemoryPatch } from "./patch.ts";
-import { MEMORY_TARGETS, type MemoryStore, type MemoryTarget } from "../store/types.ts";
+import { MEMORY_TARGETS, type MemoryStore, type MemoryTarget } from "../curator-store/types.ts";
 
 export type RunMemoryCuratorOnceOptions = {
 	memoryStore: MemoryStore;
