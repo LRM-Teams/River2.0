@@ -4,7 +4,6 @@
     "npm:pi-web-access",
     "npm:pi-mcp-adapter",
     "npm:pi-subagents",
-    "npm:@jhp/pi-memory",
-    "npm:pi-lens"
+    "npm:@jhp/pi-memory"
   ]
 }
