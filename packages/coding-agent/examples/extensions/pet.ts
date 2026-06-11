@@ -10,6 +10,11 @@
  *   /pet cat|dog|fox|bot         Switch species
  *   /pet name <name>             Rename the pet
  *   /pet mood                    Show mood, stats, and progress
+ *   /pet checkin                 Claim the daily check-in reward
+ *   /pet feed                    Feed the pet
+ *   /pet bag                     Show inventory items
+ *   /pet equip <item>            Equip a cosmetic item
+ *   /pet unequip                 Remove the equipped item
  *   /pet position widget|overlay Move between editor widget and floating overlay
  *   /pet reset                   Reset pet profile
  *   /pet ask <question>          Ask about current context without saving the answer
@@ -36,6 +41,22 @@ type PetKind = "cat" | "dog" | "fox" | "bot";
 type PetRarity = "common" | "rare" | "epic" | "legendary";
 type PetPersonality = "calm" | "curious" | "snarky" | "loyal" | "sleepy";
 type PetPosition = "widget" | "overlay";
+type PetItemRarity = "common" | "rare" | "epic" | "legendary";
+type PetItemTrigger = "tool" | "memory" | "checkin";
+
+interface PetItem {
+	id: string;
+	name: string;
+	rarity: PetItemRarity;
+	glyph: string;
+	color: "accent" | "success" | "warning" | "error" | "muted";
+	trigger: PetItemTrigger;
+}
+
+interface PetInventoryItem {
+	itemId: string;
+	count: number;
+}
 
 interface PetStats {
 	focus: number;
@@ -57,6 +78,10 @@ interface PetProfile {
 	toolsCompleted: number;
 	position: PetPosition;
 	enabled: boolean;
+	lastCheckInDay?: string;
+	feedCount: number;
+	inventory: PetInventoryItem[];
+	equippedItemId?: string;
 }
 
 const PET_PROFILE_TYPE = "pet-profile";
@@ -66,6 +91,19 @@ const SLEEP_AFTER_MS = 25_000;
 const PET_KINDS: PetKind[] = ["cat", "dog", "fox", "bot"];
 const PERSONALITIES: PetPersonality[] = ["calm", "curious", "snarky", "loyal", "sleepy"];
 const RARITIES: PetRarity[] = ["common", "rare", "epic", "legendary"];
+const PET_ITEMS: PetItem[] = [
+	{ id: "tin-bell", name: "Tin Bell", rarity: "common", glyph: "o", color: "muted", trigger: "tool" },
+	{ id: "green-scarf", name: "Green Scarf", rarity: "common", glyph: "~", color: "success", trigger: "checkin" },
+	{ id: "amber-token", name: "Amber Token", rarity: "rare", glyph: "*", color: "warning", trigger: "tool" },
+	{ id: "memory-lens", name: "Memory Lens", rarity: "rare", glyph: "@", color: "accent", trigger: "memory" },
+	{ id: "violet-badge", name: "Violet Badge", rarity: "epic", glyph: "#", color: "error", trigger: "memory" },
+	{ id: "star-crown", name: "Star Crown", rarity: "legendary", glyph: "^", color: "warning", trigger: "memory" },
+];
+const DAILY_CHECKIN_XP = 2;
+const FEED_XP = 1;
+const TOOL_DROP_CHANCE = 0.015;
+const MEMORY_DROP_CHANCE = 0.05;
+const CHECKIN_DROP_CHANCE = 0.08;
 
 const PET_ASK_PROMPT = `You are a tiny terminal pet companion inside pi.
 Answer the user's question using the provided conversation context.
@@ -228,10 +266,12 @@ class PetComponent implements Component {
 		const pose = this.getPose();
 		const frames = PET_ART[this.profile.species][pose];
 		const art = frames[this.frame % frames.length] ?? frames[0];
+		const equipped = getPetItem(this.profile.equippedItemId);
+		const charm = equipped ? ` ${this.theme.fg(equipped.color, equipped.glyph)}` : "";
 		const title = `${this.profile.name} ${this.profile.rarity} ${this.profile.personality}`;
 		const label = this.theme.fg("accent", `pet:${this.profile.species}`);
 		const mood = this.theme.fg("dim", this.mood);
-		const lines = [` ${label} ${this.theme.fg("muted", title)} ${mood}`, ...art];
+		const lines = [` ${label}${charm} ${this.theme.fg("muted", title)} ${mood}`, ...art];
 
 		for (const line of this.replyLines) {
 			lines.push(this.theme.fg("muted", `  < ${line}`));
@@ -294,6 +334,8 @@ function defaultProfile(): PetProfile {
 		toolsCompleted: 0,
 		position: "widget",
 		enabled: true,
+		feedCount: 0,
+		inventory: [],
 	};
 }
 
@@ -308,6 +350,13 @@ function normalizeProfile(value: unknown): PetProfile | undefined {
 	const position =
 		partial.position === "overlay" || partial.position === "widget" ? partial.position : fallback.position;
 	const stats = partial.stats ?? fallback.stats;
+	const inventory = Array.isArray(partial.inventory)
+		? partial.inventory.map(normalizeInventoryItem).filter((item) => item !== undefined)
+		: fallback.inventory;
+	const equippedItemId =
+		typeof partial.equippedItemId === "string" && PET_ITEMS.some((item) => item.id === partial.equippedItemId)
+			? partial.equippedItemId
+			: undefined;
 
 	return {
 		name: typeof partial.name === "string" && partial.name.trim() ? partial.name.trim().slice(0, 24) : fallback.name,
@@ -327,7 +376,18 @@ function normalizeProfile(value: unknown): PetProfile | undefined {
 		toolsCompleted: safeCount(partial.toolsCompleted, fallback.toolsCompleted),
 		position,
 		enabled: typeof partial.enabled === "boolean" ? partial.enabled : fallback.enabled,
+		lastCheckInDay: typeof partial.lastCheckInDay === "string" ? partial.lastCheckInDay : undefined,
+		feedCount: safeCount(partial.feedCount, fallback.feedCount),
+		inventory,
+		equippedItemId,
 	};
+}
+
+function normalizeInventoryItem(value: unknown): PetInventoryItem | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const partial = value as Partial<PetInventoryItem>;
+	if (typeof partial.itemId !== "string" || !PET_ITEMS.some((item) => item.id === partial.itemId)) return undefined;
+	return { itemId: partial.itemId, count: Math.max(1, safeCount(partial.count, 1)) };
 }
 
 function safeStat(value: unknown, fallback: number): number {
@@ -379,13 +439,29 @@ function getContextMessages(branch: SessionEntry[]): AgentMessage[] {
 	return compactedBranch.map(entryToMessage).filter((message) => message !== undefined);
 }
 
+function getXpForNextLevel(level: number): number {
+	return Math.floor(8 + level * level * 3.5);
+}
+
+function getTodayKey(): string {
+	return new Date().toISOString().slice(0, 10);
+}
+
+function getPetItem(itemId: string | undefined): PetItem | undefined {
+	return itemId ? PET_ITEMS.find((item) => item.id === itemId) : undefined;
+}
+
 function createStatusCard(profile: PetProfile): string {
+	const nextXp = getXpForNextLevel(profile.level);
+	const equipped = getPetItem(profile.equippedItemId);
+	const itemCount = profile.inventory.reduce((total, item) => total + item.count, 0);
 	return [
 		`${profile.name} the ${profile.rarity} ${profile.species}`,
-		`personality: ${profile.personality}  level: ${profile.level}  xp: ${profile.xp}`,
+		`personality: ${profile.personality}  level: ${profile.level}  xp: ${profile.xp}/${nextXp}`,
 		`stats: focus ${profile.stats.focus}/10, energy ${profile.stats.energy}/10, curiosity ${profile.stats.curiosity}/10`,
 		`       sass ${profile.stats.sass}/10, loyalty ${profile.stats.loyalty}/10`,
-		`activity: ${profile.interactions} chats, ${profile.toolsCompleted} tools, position ${profile.position}`,
+		`activity: ${profile.interactions} chats, ${profile.toolsCompleted} tools, feeds ${profile.feedCount}`,
+		`bag: ${itemCount} items${equipped ? `, equipped ${equipped.name}` : ""}  check-in: ${profile.lastCheckInDay ?? "never"}`,
 	].join("\n");
 }
 
@@ -591,15 +667,59 @@ export default function petExtension(pi: ExtensionAPI) {
 
 	function gainXp(amount: number): void {
 		profile.xp += amount;
-		const nextLevel = Math.floor(profile.xp / 5) + 1;
-		if (nextLevel > profile.level) {
-			profile.level = nextLevel;
+		let leveled = false;
+		while (profile.xp >= getXpForNextLevel(profile.level)) {
+			profile.xp -= getXpForNextLevel(profile.level);
+			profile.level++;
+			leveled = true;
+		}
+		if (leveled) {
 			setReply(`${profile.name} reached level ${profile.level}.`, "celebrate");
 		}
 	}
 
 	function bumpStat(key: keyof PetStats, amount = 1): void {
 		profile.stats[key] = Math.max(0, Math.min(10, profile.stats[key] + amount));
+	}
+
+	function addItem(item: PetItem): void {
+		const existing = profile.inventory.find((inventoryItem) => inventoryItem.itemId === item.id);
+		if (existing) existing.count++;
+		else profile.inventory.push({ itemId: item.id, count: 1 });
+	}
+
+	function rollDrop(trigger: PetItemTrigger, chance: number): PetItem | undefined {
+		if (Math.random() >= chance) return undefined;
+		const candidates = PET_ITEMS.filter((item) => item.trigger === trigger);
+		if (candidates.length === 0) return undefined;
+		const roll = Math.random();
+		const maxRarity: PetItemRarity =
+			roll < 0.82 ? "common" : roll < 0.97 ? "rare" : roll < 0.995 ? "epic" : "legendary";
+		const rarityOrder: PetItemRarity[] = ["common", "rare", "epic", "legendary"];
+		const maxIndex = rarityOrder.indexOf(maxRarity);
+		const pool = candidates.filter((item) => rarityOrder.indexOf(item.rarity) <= maxIndex);
+		return pool[Math.floor(Math.random() * pool.length)];
+	}
+
+	function maybeDropItem(trigger: PetItemTrigger, chance: number): PetItem | undefined {
+		const item = rollDrop(trigger, chance);
+		if (!item) return undefined;
+		addItem(item);
+		setReply(`Found ${item.rarity} item: ${item.name} ${item.glyph}`, "celebrate", 7000);
+		return item;
+	}
+
+	function createBagCard(): string {
+		if (profile.inventory.length === 0) return "Bag is empty. Try /pet checkin or keep working with tools.";
+		return profile.inventory
+			.map((inventoryItem) => {
+				const item = getPetItem(inventoryItem.itemId);
+				if (!item) return undefined;
+				const equipped = profile.equippedItemId === item.id ? " equipped" : "";
+				return `${item.glyph} ${item.name} (${item.rarity}) x${inventoryItem.count}${equipped}`;
+			})
+			.filter((line) => line !== undefined)
+			.join("\n");
 	}
 
 	function talkToPet(message: string): string {
@@ -718,6 +838,10 @@ export default function petExtension(pi: ExtensionAPI) {
 		profile.toolsCompleted++;
 		bumpStat(event.isError ? "sass" : "focus", 1);
 		gainXp(event.isError ? 0 : 1);
+		if (!event.isError) {
+			const isMemoryTool = event.toolName.toLowerCase().includes("memory");
+			maybeDropItem(isMemoryTool ? "memory" : "tool", isMemoryTool ? MEMORY_DROP_CHANCE : TOOL_DROP_CHANCE);
+		}
 		if (event.isError && !chatTimer) setMood("concerned");
 		else if (activeToolCount === 0 && !chatTimer) setMood("thinking");
 		saveProfile();
@@ -775,12 +899,68 @@ export default function petExtension(pi: ExtensionAPI) {
 				return;
 			}
 
+			if (next === "bag" || next === "inventory") {
+				setReply(createBagCard(), "chat", 9000);
+				ctx.ui.notify("Pet bag shown", "info");
+				return;
+			}
+
+			if (next === "checkin" || next === "签到") {
+				const today = getTodayKey();
+				if (profile.lastCheckInDay === today) {
+					setReply("今天已经签到过了。明天再来。", "chat");
+					return;
+				}
+				profile.lastCheckInDay = today;
+				gainXp(DAILY_CHECKIN_XP);
+				bumpStat("loyalty", 1);
+				const item = maybeDropItem("checkin", CHECKIN_DROP_CHANCE);
+				if (!item) setReply(`签到完成。${profile.name} +${DAILY_CHECKIN_XP} xp。`, "celebrate");
+				saveProfile();
+				return;
+			}
+
+			if (next === "feed" || next === "喂食") {
+				profile.feedCount++;
+				gainXp(FEED_XP);
+				bumpStat("energy", 1);
+				setReply(`${profile.name} 吃饱了。+${FEED_XP} xp。`, "celebrate");
+				saveProfile();
+				return;
+			}
+
 			if (next === "reset") {
 				profile = defaultProfile();
 				syncComponentProfile();
 				applyPet(ctx);
 				saveProfile();
 				ctx.ui.notify("Pet profile reset", "info");
+				return;
+			}
+
+			if (next.startsWith("equip ")) {
+				const itemName = raw.slice(6).trim().toLowerCase();
+				const inventoryItem = profile.inventory.find((owned) => {
+					const item = getPetItem(owned.itemId);
+					return item?.id === itemName || item?.name.toLowerCase() === itemName;
+				});
+				if (!inventoryItem) {
+					ctx.ui.notify("Item not found in bag. Use /pet bag.", "error");
+					return;
+				}
+				profile.equippedItemId = inventoryItem.itemId;
+				syncComponentProfile();
+				const item = getPetItem(inventoryItem.itemId);
+				setReply(item ? `Equipped ${item.name} ${item.glyph}.` : "Equipped item.");
+				saveProfile();
+				return;
+			}
+
+			if (next === "unequip") {
+				profile.equippedItemId = undefined;
+				syncComponentProfile();
+				setReply("Item removed.");
+				saveProfile();
 				return;
 			}
 

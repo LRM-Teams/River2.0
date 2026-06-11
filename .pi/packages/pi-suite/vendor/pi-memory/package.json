@@ -1,0 +1,68 @@
+{
+	"name": "@jhp/pi-memory",
+	"version": "0.3.12",
+	"description": "Pi coding agent extension for structured time-aware memory with qmd-powered search and curator support",
+	"main": "index.ts",
+	"bin": {
+		"jhp-pi-memory-curator": "./src/cli.ts"
+	},
+	"type": "module",
+	"keywords": [
+		"pi",
+		"pi-coding-agent",
+		"pi-package",
+		"memory",
+		"search",
+		"qmd",
+		"curator",
+		"time-aware-memory",
+		"scratchpad",
+		"daily-log"
+	],
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"author": "JHP",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/jhp/pi-memory.git"
+	},
+	"bugs": {
+		"url": "https://github.com/jhp/pi-memory/issues"
+	},
+	"homepage": "https://github.com/jhp/pi-memory#readme",
+	"files": [
+		"index.ts",
+		"src",
+		"scripts",
+		"README.md",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"postinstall": "node scripts/postinstall.cjs",
+		"build": "tsc -p tsconfig.json --noEmit",
+		"lint": "biome check .",
+		"test": "tsx --test test/*.test.ts",
+		"pack:check": "npm pack --dry-run"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.0",
+		"tsx": "4.0.0",
+		"typescript": "5.9.3"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	},
+	"overrides": {
+		"rimraf": "6.1.3",
+		"glob": "13.0.3"
+	}
+}

@@ -1,0 +1,79 @@
+{
+  "name": "@lebronj/pi-suite",
+  "version": "0.1.1",
+  "description": "JHP's Pi extension suite for team coding workflows",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extensions",
+    "skills",
+    "prompts"
+  ],
+  "author": "JHP",
+  "license": "MIT",
+  "files": [
+    "extensions",
+    "prompts",
+    "skills",
+    "scripts",
+    "vendor",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "pi-mcp-adapter": "2.9.0",
+    "pi-subagents": "0.28.0",
+    "pi-web-access": "0.10.7"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions",
+      "./vendor/pi-memory/index.ts",
+      "node_modules/pi-mcp-adapter/index.ts",
+      "node_modules/pi-subagents/src/extension/index.ts",
+      "node_modules/pi-web-access/index.ts"
+    ],
+    "prompts": [
+      "./prompts",
+      "node_modules/pi-subagents/prompts"
+    ],
+    "skills": [
+      "./skills",
+      "node_modules/pi-subagents/skills",
+      "node_modules/pi-web-access/skills"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "pack:check": "npm pack --dry-run",
+    "bootstrap": "bash scripts/bootstrap.sh"
+  }
+}
