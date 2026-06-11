@@ -12,10 +12,10 @@ pi install npm:pi-mcp-adapter
 pi install npm:pi-subagents
 ```
 
-Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and optionally set up qmd for memory search:
+Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-bash scripts/bootstrap.sh
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.2.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included

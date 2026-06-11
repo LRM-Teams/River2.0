@@ -65,21 +65,41 @@ NODE
 echo "Installing Pi extension suite: $PI_SUITE"
 pi install "$PI_SUITE"
 
-echo "Setting up qmd for memory_search when possible..."
-if command -v bun >/dev/null 2>&1; then
+ensure_bun() {
+  if command -v bun >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to auto-install Bun for qmd." >&2
+    return 1
+  fi
+
+  echo "Installing Bun for qmd..."
+  curl -fsSL https://bun.sh/install | bash
+  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+
+  command -v bun >/dev/null 2>&1
+}
+
+echo "Setting up qmd for memory_search..."
+if ensure_bun; then
   bun install -g https://github.com/tobi/qmd
-  export PATH="$HOME/.bun/bin:$PATH"
+  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+  export PATH="$BUN_INSTALL/bin:$PATH"
   mkdir -p "$HOME/.pi/agent/memory"
   if command -v qmd >/dev/null 2>&1; then
     qmd collection add "$HOME/.pi/agent/memory" --name pi-memory || true
-    qmd embed || true
+    qmd embed || echo "qmd embed failed; run 'qmd embed' later to enable semantic memory_search."
   else
     echo "qmd was installed but is not on PATH. Add ~/.bun/bin to PATH, then run qmd embed."
   fi
 else
   cat <<'MSG'
-Bun not found. Core memory tools still work, but memory_search needs qmd.
-Install qmd later with:
+Could not auto-install Bun, so qmd setup was skipped.
+Core memory tools still work, but memory_search needs qmd.
+Install later with:
+  curl -fsSL https://bun.sh/install | bash
   bun install -g https://github.com/tobi/qmd
   qmd collection add ~/.pi/agent/memory --name pi-memory
   qmd embed
