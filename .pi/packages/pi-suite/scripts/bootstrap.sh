@@ -65,6 +65,41 @@ NODE
 echo "Installing Pi extension suite: $PI_SUITE"
 pi install "$PI_SUITE"
 
+link_if_safe() {
+  local source_path="$1"
+  local link_path="$2"
+  local label="$3"
+
+  if [ ! -e "$source_path" ]; then
+    echo "Skip linking $label: source does not exist: $source_path"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$link_path")"
+  if [ -L "$link_path" ]; then
+    ln -sfn "$source_path" "$link_path"
+    echo "Linked $label: $link_path -> $source_path"
+  elif [ -d "$link_path" ] && [ -z "$(find "$link_path" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    rmdir "$link_path"
+    ln -s "$source_path" "$link_path"
+    echo "Linked $label: $link_path -> $source_path"
+  elif [ ! -e "$link_path" ]; then
+    ln -s "$source_path" "$link_path"
+    echo "Linked $label: $link_path -> $source_path"
+  else
+    echo "Skip linking $label: $link_path exists and is not empty."
+  fi
+}
+
+WORKSPACE_DIR="${PI_WORKSPACE_DIR:-$PWD}"
+WORKSPACE_PI_DIR="$WORKSPACE_DIR/.pi"
+MEMORY_DIR="$AGENT_DIR/memory"
+SUITE_SKILLS_DIR="${PI_SUITE_SKILLS_DIR:-$AGENT_DIR/npm/node_modules/@lebronj/pi-suite/skills}"
+
+mkdir -p "$MEMORY_DIR"
+link_if_safe "$MEMORY_DIR" "$WORKSPACE_PI_DIR/memory" "memory"
+link_if_safe "$SUITE_SKILLS_DIR" "$WORKSPACE_PI_DIR/skills" "skills"
+
 ensure_bun() {
   if command -v bun >/dev/null 2>&1; then
     return 0
