@@ -53,6 +53,11 @@ Memory tools:
 - `memory_curator_enable`: enable the external daily curator service using systemd user timer or cron fallback.
 - `memory_curator_disable`: disable and uninstall the external daily curator service.
 - `memory_curator_status`: show service backend, schedule, and state.
+- `memory_version_status`: show local evolution repo status, remote, branch, dirty state, last commit, and auto-push setting.
+- `memory_version_snapshot`: manually snapshot `memory/` and `skill-drafts/`, sync mirrors, and commit.
+- `memory_version_list`: list recent snapshots.
+- `memory_version_restore`: restore `memory`, `skill-drafts`, or `all` from a snapshot id after creating a pre-restore backup.
+- `memory_version_push`: manually push the local evolution repo to GitHub.
 
 Structured metadata example:
 
@@ -72,6 +77,16 @@ Curator and learning behavior:
 - Repeated candidates can become proposed memory promotions or proposed disabled skill drafts after `memory_curate`.
 - Approval is explicit by default: memory proposals write to memory stores; skill proposals write disabled drafts under `~/.pi/agent/skill-drafts/`.
 - The curator avoids semantic auto-delete/merge; ambiguous learning stays in review first.
+
+Memory versioning:
+
+- Runtime memory remains authoritative at `~/.pi/agent/memory`; disabled skill drafts remain authoritative at `~/.pi/agent/skill-drafts`.
+- Versioning mirror and snapshots live at `~/.pi/agent/evolution` by default.
+- Default remote is `https://github.com/LRM-Teams/pi-evolution.git`; it should be private because memory is committed in plaintext.
+- Automatic local snapshot + commit is enabled by default; automatic push is disabled unless `PI_EVOLUTION_AUTO_PUSH=1`.
+- Snapshots run before mutating memory tools, curator runs, learning approve/reject, session summaries/handoffs, compact handoffs, restore, and external curator `run-once`.
+- Slash commands: `/memory-version-status`, `/memory-version-snapshot [reason]`, `/memory-version-list`, `/memory-version-restore <snapshot-id> [memory|skill-drafts|all]`, `/memory-version-push`.
+- Restore always writes a pre-restore snapshot first, then restores selected files and commits the restored state.
 
 External curator service:
 
@@ -104,6 +119,12 @@ Useful memory environment variables:
 - `PI_MEMORY_AUTO_APPROVE_MEMORY=1`: automatically approve newly created memory proposals.
 - `PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS=1`: automatically create newly proposed disabled skill drafts.
 - `PI_MEMORY_CURATOR_STARTUP_HINT=0`: hide the disabled-curator startup hint.
+- `PI_EVOLUTION_ENABLED=0`: disable snapshot + git versioning.
+- `PI_EVOLUTION_DIR`: override evolution repo directory; default `~/.pi/agent/evolution`.
+- `PI_EVOLUTION_REMOTE`: override remote; default `https://github.com/LRM-Teams/pi-evolution.git`.
+- `PI_EVOLUTION_BRANCH`: override branch; default `main`.
+- `PI_EVOLUTION_AUTO_COMMIT=0`: disable automatic local commits.
+- `PI_EVOLUTION_AUTO_PUSH=1`: push automatically after commits.
 
 ## Web And Research
 
@@ -224,6 +245,7 @@ Bootstrap behavior:
 - Sets default provider/model in `~/.pi/agent/settings.json`.
 - Runs `pi install npm:@lebronj/pi-suite` by default.
 - Creates `~/.pi/agent/memory` and links it into the workspace `.pi/memory` when safe.
+- Optionally initializes the local `~/.pi/agent/evolution` repo for memory/skill-draft snapshots; it never writes tokens or enables auto-push.
 - Links suite skills into the workspace `.pi/skills` when safe.
 - Installs Bun + qmd when possible and initializes the `pi-memory` qmd collection.
 - Does not auto-enable the external memory curator service; the startup hint explains how to enable it.

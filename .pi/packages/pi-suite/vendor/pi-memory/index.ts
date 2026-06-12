@@ -50,6 +50,16 @@ import {
 import { applyReviewLifecycle, approveMemoryPromotion, proposeMemoryPromotions, rejectReviewItem } from "./src/learning/memory.ts";
 import { approveSkillDraft, listSkillDraftProposals, proposeSkillDrafts } from "./src/learning/skills.ts";
 import { FileMemoryStore } from "./src/curator-store/file-store.ts";
+import {
+	createEvolutionSnapshot,
+	getEvolutionGitStatus,
+	listManifests,
+	pushEvolution,
+	resolveEvolutionConfig,
+	restoreEvolutionSnapshot,
+	syncEvolutionAfterChange,
+	type RestoreTarget,
+} from "./src/evolution/index.ts";
 import { disableCuratorService, enableCuratorService, getCuratorServiceStatus } from "./src/service-controller.ts";
 
 
@@ -81,6 +91,10 @@ let REVIEW_FILE = path.join(MEMORY_DIR, "REVIEW.md");
 let SCRATCHPAD_FILE = path.join(MEMORY_DIR, "SCRATCHPAD.md");
 let DAILY_DIR = path.join(MEMORY_DIR, "daily");
 let SKILL_DRAFTS_DIR = path.join(path.dirname(MEMORY_DIR), "skill-drafts");
+
+function currentEvolutionConfig() {
+	return resolveEvolutionConfig(MEMORY_DIR);
+}
 
 /** Override base directory (for testing). */
 export function _setBaseDir(baseDir: string) {
@@ -313,12 +327,14 @@ const STRUCTURED_MEMORY_TARGETS = ["memory", "user", "state", "review"] as const
 const MEMORY_WRITE_TARGETS = ["long_term", "daily", "state", "user", "review"] as const;
 const MEMORY_READ_TARGETS = ["long_term", "scratchpad", "daily", "list", "user", "state", "review", "all"] as const;
 const MEMORY_EDIT_ACTIONS = ["read", "add", "replace", "remove", "replace_all", "compact"] as const;
+const MEMORY_VERSION_RESTORE_TARGETS = ["memory", "skill-drafts", "all"] as const;
 const STRUCTURED_MEMORY_TYPES = ["fact", "preference", "event", "temporary", "quota", "review"] as const;
 
 type StructuredMemoryTarget = (typeof STRUCTURED_MEMORY_TARGETS)[number];
 type MemoryWriteTarget = (typeof MEMORY_WRITE_TARGETS)[number];
 type MemoryReadTarget = (typeof MEMORY_READ_TARGETS)[number];
 type MemoryEditAction = (typeof MEMORY_EDIT_ACTIONS)[number];
+type MemoryVersionRestoreTarget = (typeof MEMORY_VERSION_RESTORE_TARGETS)[number];
 
 type StructuredWriteOptions = {
 	target: StructuredMemoryTarget;
@@ -830,6 +846,7 @@ export function buildTransitionHandoff(ctx: ExtensionContext, reason: Transition
 
 async function writeTransitionHandoff(ctx: ExtensionContext, reason: TransitionHandoffReason): Promise<boolean> {
 	ensureDirs();
+	await evolutionBeforeChange(`session transition handoff ${formatTransitionHandoffReason(reason)}`, "memory: snapshot before handoff", "session", shortSessionId(ctx.sessionManager.getSessionId()));
 	const sid = shortSessionId(ctx.sessionManager.getSessionId());
 	const ts = nowTimestamp();
 	const handoff = buildTransitionHandoff(ctx, reason, sid, ts);
@@ -840,6 +857,7 @@ async function writeTransitionHandoff(ctx: ExtensionContext, reason: TransitionH
 	fs.writeFileSync(filePath, existing + separator + handoff, "utf-8");
 	await ensureQmdAvailableForUpdate();
 	await runQmdUpdateNow();
+	await evolutionAfterChange("memory: sync after handoff");
 	return true;
 }
 
@@ -1423,6 +1441,7 @@ function getSnapshotMode(): "stable" | "per-turn" {
 
 async function runCurator(reason: string): Promise<string> {
 	ensureDirs();
+	await evolutionBeforeChange(`curator before ${reason}`, "memory: snapshot before curate", "tool");
 	const store = new FileMemoryStore(MEMORY_DIR);
 	const result = await runMemoryCuratorOnce({
 		memoryStore: store,
@@ -1452,6 +1471,7 @@ async function runCurator(reason: string): Promise<string> {
 		await ensureQmdAvailableForUpdate();
 		scheduleQmdUpdate();
 	}
+	await evolutionAfterChange("memory: sync after curate");
 	const notes = [
 		memoryResult.created > 0 ? `proposed ${memoryResult.created} memory promotion(s)` : "",
 		skillResult.created > 0 ? `proposed ${skillResult.created} skill draft(s)` : "",
@@ -1459,6 +1479,39 @@ async function runCurator(reason: string): Promise<string> {
 		autoApprovedSkills > 0 ? `auto-approved ${autoApprovedSkills} skill draft(s)` : "",
 	].filter(Boolean);
 	return notes.length > 0 ? `${result.summary}; ${notes.join("; ")}` : result.summary;
+}
+
+async function evolutionBeforeChange(reason: string, commitMessage: string, trigger = "tool", sessionId?: string): Promise<void> {
+	try {
+		createEvolutionSnapshot(currentEvolutionConfig(), { reason, trigger, sessionId, commitMessage });
+	} catch {
+		// Memory operations should not fail just because versioning is unavailable.
+	}
+}
+
+async function evolutionAfterChange(commitMessage: string): Promise<void> {
+	try {
+		const config = currentEvolutionConfig();
+		syncEvolutionAfterChange(config, commitMessage);
+		if (config.autoPush) pushEvolution(config);
+	} catch {
+		// Best-effort only; the memory write itself remains authoritative.
+	}
+}
+
+function formatEvolutionStatusText(status: ReturnType<typeof getEvolutionGitStatus>): string {
+	return [
+		`enabled: ${status.enabled}`,
+		`repo: ${status.repoDir}`,
+		`initialized: ${status.initialized}`,
+		`branch: ${status.branch || "n/a"}`,
+		`remote: ${status.remote || "n/a"}`,
+		`dirty: ${status.dirty}`,
+		`autoCommit: ${status.autoCommit}`,
+		`autoPush: ${status.autoPush}`,
+		`lastCommit: ${status.lastCommit || "n/a"}`,
+		status.status ? `status:\n${status.status}` : "status: clean",
+	].join("\n");
 }
 
 function startupCuratorHintEnabled(): boolean {
@@ -1500,6 +1553,31 @@ export function _resetMemorySnapshot() {
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+	const versionedToolCommitMessages: Record<string, string> = {
+		memory_write: "memory: sync after memory_write",
+		memory_edit: "memory: sync after memory_edit",
+		scratchpad: "memory: sync after scratchpad",
+		memory_learning_approve: "memory: sync after learning approve",
+		memory_learning_reject: "memory: sync after learning reject",
+	};
+
+	function shouldVersionToolCall(toolName: string, input: unknown): boolean {
+		if (!(toolName in versionedToolCommitMessages)) return false;
+		if (toolName === "scratchpad" && (input as { action?: string })?.action === "list") return false;
+		if (toolName === "memory_edit" && (input as { action?: string })?.action === "read") return false;
+		return true;
+	}
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (!shouldVersionToolCall(event.toolName, event.input)) return;
+		await evolutionBeforeChange(`${event.toolName} tool`, `memory: snapshot before ${event.toolName}`, "tool", shortSessionId(ctx.sessionManager.getSessionId()));
+	});
+
+	pi.on("tool_result", async (event) => {
+		if (event.isError || !shouldVersionToolCall(event.toolName, event.input)) return;
+		await evolutionAfterChange(versionedToolCommitMessages[event.toolName]);
+	});
+
 	// --- session_start: detect qmd, auto-setup collection ---
 	pi.on("session_start", async (_event, ctx) => {
 		ensureDirs();
@@ -1574,6 +1652,7 @@ export default function (pi: ExtensionAPI) {
 				const result = await generateExitSummary(ctx);
 				if (result.hasMessages) {
 					const summary = result.summary ?? buildExitSummaryFallback(result.error);
+					await evolutionBeforeChange("session shutdown summary", "memory: snapshot before session summary", "session", shortSessionId(ctx.sessionManager.getSessionId()));
 					const sid = shortSessionId(ctx.sessionManager.getSessionId());
 					const ts = nowTimestamp();
 					const entry = formatExitSummaryEntry(summary, reason, sid, ts);
@@ -1584,6 +1663,7 @@ export default function (pi: ExtensionAPI) {
 					await runSessionLearningExtractor(ctx);
 					await ensureQmdAvailableForUpdate();
 					await runQmdUpdateNow();
+					await evolutionAfterChange("memory: sync after session summary");
 				}
 			}
 		} finally {
@@ -1686,6 +1766,7 @@ export default function (pi: ExtensionAPI) {
 		// source files) would keep being injected.
 		try {
 			if (parts.length === 0) return;
+			await evolutionBeforeChange("session before compact handoff", "memory: snapshot before compact handoff", "session", sid);
 
 			const handoff = [`<!-- HANDOFF ${ts} [${sid}] -->`, "## Session Handoff", ...parts].join("\n");
 
@@ -1695,6 +1776,7 @@ export default function (pi: ExtensionAPI) {
 			fs.writeFileSync(filePath, existing + separator + handoff, "utf-8");
 			await ensureQmdAvailableForUpdate();
 			scheduleQmdUpdate();
+			await evolutionAfterChange("memory: sync after compact handoff");
 		} finally {
 			refreshMemorySnapshot("session_before_compact");
 		}
@@ -2261,6 +2343,146 @@ export default function (pi: ExtensionAPI) {
 			const result = getCuratorServiceStatus({ memoryDir: MEMORY_DIR, cliPath: new URL("./src/cli.ts", import.meta.url).pathname });
 			ctx.ui.notify(result.message, result.ok ? "info" : "error");
 		},
+	});
+
+	// --- memory versioning tools ---
+	pi.registerTool({
+		name: "memory_version_status",
+		label: "Memory Version Status",
+		description: "View evolution repo status, remote, branch, dirty state, last commit, and auto-push setting.",
+		parameters: Type.Object({}),
+		async execute() {
+			try {
+				const status = getEvolutionGitStatus(currentEvolutionConfig());
+				return { content: [{ type: "text", text: formatEvolutionStatusText(status) }], details: status };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_version_snapshot",
+		label: "Memory Version Snapshot",
+		description: "Manually create a memory + skill-drafts snapshot, sync current mirrors, and commit if changed.",
+		parameters: Type.Object({
+			reason: Type.Optional(Type.String({ description: "Snapshot reason" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			try {
+				const result = createEvolutionSnapshot(currentEvolutionConfig(), {
+					reason: params.reason || "manual snapshot",
+					trigger: "tool",
+					sessionId: shortSessionId(ctx.sessionManager.getSessionId()),
+					commitMessage: "memory: manual snapshot",
+				});
+				if (currentEvolutionConfig().autoPush) pushEvolution(currentEvolutionConfig());
+				return { content: [{ type: "text", text: result.manifest ? `Snapshot ${result.manifest.id}` : `Snapshot skipped: ${result.skipped}` }], details: result };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_version_list",
+		label: "Memory Version List",
+		description: "List recent memory evolution snapshots.",
+		parameters: Type.Object({
+			limit: Type.Optional(Type.Number({ description: "Max snapshots to list. Default: 20" })),
+		}),
+		async execute(_toolCallId, params) {
+			try {
+				const manifests = listManifests(currentEvolutionConfig(), params.limit || 20);
+				const text = manifests.length === 0
+					? "No snapshots found."
+					: manifests.map((manifest) => `- ${manifest.id} ${manifest.createdAt} ${manifest.reason} (${manifest.files.memory} memory files, ${manifest.files.skillDrafts} skill files)`).join("\n");
+				return { content: [{ type: "text", text }], details: { manifests } };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_version_restore",
+		label: "Memory Version Restore",
+		description: "Restore memory and/or skill drafts from a snapshot id. Creates a pre-restore snapshot first.",
+		parameters: Type.Object({
+			id: Type.String({ description: "Snapshot id" }),
+			target: Type.Optional(StringEnum(MEMORY_VERSION_RESTORE_TARGETS, { description: "Restore target. Default: all" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			try {
+				const target = (params.target || "all") as MemoryVersionRestoreTarget;
+				const result = restoreEvolutionSnapshot(currentEvolutionConfig(), params.id, target as RestoreTarget, shortSessionId(ctx.sessionManager.getSessionId()));
+				snapshotDirty = true;
+				return { content: [{ type: "text", text: `Restored ${target} from snapshot ${result.restored.id}.` }], details: result };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_version_push",
+		label: "Memory Version Push",
+		description: "Manually push the local evolution repo to GitHub.",
+		parameters: Type.Object({}),
+		async execute() {
+			try {
+				const output = pushEvolution(currentEvolutionConfig());
+				return { content: [{ type: "text", text: output || "Pushed evolution repo." }], details: {} };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerCommand("memory-version-status", {
+		description: "Show memory evolution repo status",
+		handler: async (_args, ctx) => ctx.ui.notify(formatEvolutionStatusText(getEvolutionGitStatus(currentEvolutionConfig())), "info"),
+	});
+
+	pi.registerCommand("memory-version-snapshot", {
+		description: "Create a memory evolution snapshot",
+		handler: async (args, ctx) => {
+			const result = createEvolutionSnapshot(currentEvolutionConfig(), { reason: args.trim() || "manual snapshot", trigger: "slash_command", sessionId: shortSessionId(ctx.sessionManager.getSessionId()), commitMessage: "memory: manual snapshot" });
+			ctx.ui.notify(result.manifest ? `Snapshot ${result.manifest.id}` : `Snapshot skipped: ${result.skipped}`, "info");
+		},
+	});
+
+	pi.registerCommand("memory-version-list", {
+		description: "List memory evolution snapshots",
+		handler: async (_args, ctx) => {
+			const manifests = listManifests(currentEvolutionConfig(), 20);
+			ctx.ui.notify(manifests.length === 0 ? "No snapshots found." : manifests.map((manifest) => `${manifest.id} ${manifest.reason}`).join("\n"), "info");
+		},
+	});
+
+	pi.registerCommand("memory-version-restore", {
+		description: "Restore memory evolution snapshot: /memory-version-restore <snapshot-id> [memory|skill-drafts|all]",
+		handler: async (args, ctx) => {
+			const [id, rawTarget] = args.trim().split(/\s+/);
+			if (!id) {
+				ctx.ui.notify("Usage: /memory-version-restore <snapshot-id> [memory|skill-drafts|all]", "error");
+				return;
+			}
+			const target = MEMORY_VERSION_RESTORE_TARGETS.includes(rawTarget as MemoryVersionRestoreTarget) ? rawTarget as MemoryVersionRestoreTarget : "all";
+			const result = restoreEvolutionSnapshot(currentEvolutionConfig(), id, target as RestoreTarget, shortSessionId(ctx.sessionManager.getSessionId()));
+			snapshotDirty = true;
+			ctx.ui.notify(`Restored ${target} from snapshot ${result.restored.id}.`, "info");
+		},
+	});
+
+	pi.registerCommand("memory-version-push", {
+		description: "Push memory evolution repo",
+		handler: async (_args, ctx) => ctx.ui.notify(pushEvolution(currentEvolutionConfig()) || "Pushed evolution repo.", "info"),
 	});
 
 	// --- memory_search tool ---

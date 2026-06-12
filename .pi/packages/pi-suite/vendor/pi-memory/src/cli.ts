@@ -2,6 +2,7 @@
 import { JsonlAuditLog } from "./curator-core/audit.ts";
 import { runMemoryCuratorOnce } from "./curator-core/curate.ts";
 import { FileMemoryStore } from "./curator-store/file-store.ts";
+import { pushEvolution, resolveEvolutionConfig, syncEvolutionAfterChange, createEvolutionSnapshot } from "./evolution/index.ts";
 import { disableCuratorService, enableCuratorService, getCuratorServiceStatus, resolveMemoryDir } from "./service-controller.ts";
 
 function cliPath(): string {
@@ -22,6 +23,8 @@ function usage(): string {
 	return [
 		"Usage:",
 		"  jhp-pi-memory-curator run-once [--memory-dir <path>] [--reason <text>] [--dry-run] [--json]",
+		"  jhp-pi-memory-curator snapshot [--memory-dir <path>] [--reason <text>] [--json]",
+		"  jhp-pi-memory-curator push [--memory-dir <path>]",
 		"  jhp-pi-memory-curator enable [--memory-dir <path>] [--schedule HH:MM]",
 		"  jhp-pi-memory-curator disable [--memory-dir <path>]",
 		"  jhp-pi-memory-curator status [--memory-dir <path>]",
@@ -38,14 +41,40 @@ async function main(): Promise<void> {
 	}
 
 	if (command === "run-once") {
+		const reason = readOption(args, "--reason") || "cli";
+		const config = resolveEvolutionConfig(memoryDir);
+		if (!hasFlag(args, "--dry-run")) {
+			createEvolutionSnapshot(config, { reason: `curator before ${reason}`, trigger: "external_curator", commitMessage: "memory: snapshot before curator" });
+		}
 		const result = await runMemoryCuratorOnce({
 			memoryStore: new FileMemoryStore(memoryDir),
 			auditLog: new JsonlAuditLog(memoryDir),
-			reason: readOption(args, "--reason") || "cli",
+			reason,
 			dryRun: hasFlag(args, "--dry-run"),
 		});
-		if (hasFlag(args, "--json")) console.log(JSON.stringify(result, null, 2));
+		let evolutionCommit = null;
+		if (!hasFlag(args, "--dry-run")) {
+			evolutionCommit = syncEvolutionAfterChange(config, "memory: sync after external curator");
+			if (config.autoPush) pushEvolution(config);
+		}
+		if (hasFlag(args, "--json")) console.log(JSON.stringify({ ...result, evolutionCommit }, null, 2));
 		else console.log(result.summary);
+		return;
+	}
+
+	if (command === "snapshot") {
+		const result = createEvolutionSnapshot(resolveEvolutionConfig(memoryDir), {
+			reason: readOption(args, "--reason") || "cli snapshot",
+			trigger: "cli",
+			commitMessage: "memory: manual snapshot",
+		});
+		if (hasFlag(args, "--json")) console.log(JSON.stringify(result, null, 2));
+		else console.log(result.manifest ? `Snapshot ${result.manifest.id}` : `Snapshot skipped: ${result.skipped}`);
+		return;
+	}
+
+	if (command === "push") {
+		console.log(pushEvolution(resolveEvolutionConfig(memoryDir)) || "Pushed evolution repo.");
 		return;
 	}
 

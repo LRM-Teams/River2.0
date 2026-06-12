@@ -15,7 +15,7 @@ pi install npm:pi-subagents
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.3.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.5.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
@@ -23,7 +23,7 @@ curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.3.tgz | t
 - Local extensions: goal mode, pet, prompt URL widget, TUI redraw stats, snake, TPS notifications.
 - Prompts: changelog audit, issue analysis, PR review, wrap workflow.
 - Skills: provider checklist, weather, LeetCode array practice, Pi capability reference, image-to-editable-PPT workflow.
-- Vendored package: `@jhp/pi-memory`.
+- Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, and memory/skill-draft versioning.
 
 Install optional packages separately if needed:
 
@@ -49,7 +49,7 @@ The bootstrap script asks for an API key and writes:
 
 The API key is written to `~/.pi/agent/models.json` on the user's machine. Do not publish a shared key in this package.
 
-## Memory Search
+## Memory And Versioning
 
 `@jhp/pi-memory` works without qmd for core memory features:
 
@@ -66,6 +66,20 @@ bun install -g https://github.com/tobi/qmd
 qmd collection add ~/.pi/agent/memory --name pi-memory
 qmd embed
 ```
+
+Memory versioning is enabled by default. It snapshots `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts` into `~/.pi/agent/evolution`, commits local changes automatically, and leaves push manual by default.
+
+Useful commands:
+
+```bash
+/memory-version-status
+/memory-version-snapshot optional reason
+/memory-version-list
+/memory-version-restore <snapshot-id> [memory|skill-drafts|all]
+/memory-version-push
+```
+
+Default evolution remote: `https://github.com/LRM-Teams/pi-evolution.git`. Keep it private because it stores memory plaintext. Set `PI_EVOLUTION_AUTO_PUSH=1` only if automatic remote sync is desired.
 
 ## Goal Mode
 

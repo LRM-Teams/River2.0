@@ -33,3 +33,26 @@ export { validateMemoryPatch, type MemoryPatch } from "./curator-core/patch.ts";
 export { DEFAULT_MEMORY_DIR, FileMemoryStore } from "./curator-store/file-store.ts";
 export { ENTRY_DELIMITER, MEMORY_TARGETS, normalizeMemoryTarget, type CuratorState, type MemoryStore, type MemoryTarget } from "./curator-store/types.ts";
 export { disableCuratorService, enableCuratorService, getCuratorServiceStatus, resolveMemoryDir, type CuratorServiceBackend, type CuratorServiceResult, type CuratorServiceState } from "./service-controller.ts";
+export {
+	DEFAULT_EVOLUTION_BRANCH,
+	DEFAULT_EVOLUTION_REMOTE,
+	commitEvolutionChanges,
+	createEvolutionSnapshot,
+	createSnapshotId,
+	ensureEvolutionRepo,
+	getEvolutionGitStatus,
+	listManifests,
+	pushEvolution,
+	resolveEvolutionConfig,
+	restoreEvolutionSnapshot,
+	syncCurrentToEvolution,
+	syncEvolutionAfterChange,
+	type EvolutionConfig,
+	type EvolutionManifest,
+	type GitCommitResult,
+	type GitStatus,
+	type RestoreResult,
+	type RestoreTarget,
+	type SnapshotOptions,
+	type SnapshotResult,
+} from "./evolution/index.ts";

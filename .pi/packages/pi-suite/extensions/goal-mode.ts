@@ -192,6 +192,10 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 		if (previousTools) {
 			pi.setActiveTools(previousTools);
 			previousTools = undefined;
+			return;
+		}
+		if (activeTools.includes(GOAL_TOOL_NAME)) {
+			pi.setActiveTools(activeTools.filter((tool) => tool !== GOAL_TOOL_NAME));
 		}
 	}
 
@@ -421,6 +425,8 @@ export default function goalModeExtension(pi: ExtensionAPI): void {
 		autoContinue = restored.autoContinue;
 		if (goal?.status === "active") {
 			setGoalToolEnabled(true);
+		} else {
+			setGoalToolEnabled(false);
 		}
 		updateUi(ctx);
 	});

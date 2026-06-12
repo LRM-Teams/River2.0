@@ -94,11 +94,48 @@ link_if_safe() {
 WORKSPACE_DIR="${PI_WORKSPACE_DIR:-$PWD}"
 WORKSPACE_PI_DIR="$WORKSPACE_DIR/.pi"
 MEMORY_DIR="$AGENT_DIR/memory"
+EVOLUTION_DIR="${PI_EVOLUTION_DIR:-$AGENT_DIR/evolution}"
+EVOLUTION_REMOTE="${PI_EVOLUTION_REMOTE:-https://github.com/LRM-Teams/pi-evolution.git}"
+EVOLUTION_BRANCH="${PI_EVOLUTION_BRANCH:-main}"
 SUITE_SKILLS_DIR="${PI_SUITE_SKILLS_DIR:-$AGENT_DIR/npm/node_modules/@lebronj/pi-suite/skills}"
 
 mkdir -p "$MEMORY_DIR"
 link_if_safe "$MEMORY_DIR" "$WORKSPACE_PI_DIR/memory" "memory"
 link_if_safe "$SUITE_SKILLS_DIR" "$WORKSPACE_PI_DIR/skills" "skills"
+
+setup_evolution_repo() {
+  if [ "${PI_EVOLUTION_ENABLED:-1}" = "0" ]; then
+    echo "Memory evolution versioning disabled by PI_EVOLUTION_ENABLED=0."
+    return 0
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "Skip memory evolution repo setup: git is not installed."
+    return 0
+  fi
+  if [ -e "$EVOLUTION_DIR" ] && [ ! -d "$EVOLUTION_DIR/.git" ]; then
+    if [ -z "$(find "$EVOLUTION_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+      rmdir "$EVOLUTION_DIR"
+    else
+      echo "Skip memory evolution repo setup: $EVOLUTION_DIR exists and is not a git repo."
+      return 0
+    fi
+  fi
+  if [ ! -e "$EVOLUTION_DIR" ]; then
+    mkdir -p "$(dirname "$EVOLUTION_DIR")"
+    if ! git clone --branch "$EVOLUTION_BRANCH" "$EVOLUTION_REMOTE" "$EVOLUTION_DIR"; then
+      mkdir -p "$EVOLUTION_DIR"
+      git -C "$EVOLUTION_DIR" init -b "$EVOLUTION_BRANCH" 2>/dev/null || git -C "$EVOLUTION_DIR" init
+      git -C "$EVOLUTION_DIR" checkout -B "$EVOLUTION_BRANCH" >/dev/null 2>&1 || true
+      git -C "$EVOLUTION_DIR" remote add origin "$EVOLUTION_REMOTE" 2>/dev/null || true
+    fi
+  fi
+  mkdir -p "$EVOLUTION_DIR/memory" "$EVOLUTION_DIR/skill-drafts" "$EVOLUTION_DIR/snapshots" "$EVOLUTION_DIR/manifests"
+  echo "Memory evolution repo ready: $EVOLUTION_DIR"
+  echo "Remote: $EVOLUTION_REMOTE"
+  echo "Auto push remains off by default. Use /memory-version-push or PI_EVOLUTION_AUTO_PUSH=1."
+}
+
+setup_evolution_repo
 
 ensure_bun() {
   if command -v bun >/dev/null 2>&1; then

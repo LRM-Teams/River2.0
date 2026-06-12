@@ -12,6 +12,7 @@ Structured, time-aware memory extension for pi. It stores memory as plain Markdo
 - Curator core for exact dedupe, event lifecycle updates, temporary review, quota reset, and audit logs.
 - Review-first learning candidates that can become memory promotions or disabled skill drafts after approval.
 - Optional external curator service via systemd user timer or cron so curation can run even when pi is closed.
+- Snapshot + git versioning for `memory/` and disabled `skill-drafts/`, with restore support.
 
 ## Installation
 
@@ -49,6 +50,11 @@ The extension auto-creates the `pi-memory` qmd collection and path contexts on s
   daily/YYYY-MM-DD.md    # Daily append-only logs
 ~/.pi/agent/skill-drafts/
   <slug>/SKILL.md        # Disabled skill drafts created after approval
+~/.pi/agent/evolution/
+  memory/                # Current memory mirror
+  skill-drafts/          # Current skill draft mirror
+  snapshots/<id>/        # Point-in-time backup with manifest.json
+  manifests/<id>.json    # Snapshot manifest index
 ```
 
 Structured entries are separated by `§` and may start with metadata:
@@ -85,6 +91,11 @@ Metadata keys currently supported by tools and curator rules:
 | `memory_curator_enable` | Enable the external daily curator service |
 | `memory_curator_disable` | Disable the external daily curator service |
 | `memory_curator_status` | Show service backend, schedule, and state |
+| `memory_version_status` | Show local evolution git repo status |
+| `memory_version_snapshot` | Manually snapshot memory and skill drafts |
+| `memory_version_list` | List recent snapshots |
+| `memory_version_restore` | Restore `memory`, `skill-drafts`, or `all` from a snapshot id |
+| `memory_version_push` | Manually push the evolution repo to GitHub |
 
 ### memory_write Targets
 
@@ -168,6 +179,37 @@ Old candidates are lifecycle-managed without deletion. Low-confidence candidates
 
 Current learning extraction is text-based: it reads user/assistant conversation messages and asks the active model for structured candidates. It does not yet inspect structured tool-call graphs directly. Curator patch audit remains in `audit/curator.jsonl`; learning approvals are tracked through `REVIEW.md` proposal metadata and status changes.
 
+## Memory Versioning
+
+Pi-memory mirrors the authoritative runtime directories into a local evolution repo and stores point-in-time snapshots before important changes:
+
+```text
+~/.pi/agent/evolution/
+  memory/
+  skill-drafts/
+  snapshots/<snapshot-id>/
+    memory/
+    skill-drafts/
+    manifest.json
+  manifests/<snapshot-id>.json
+```
+
+Authoritative runtime data remains `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts`; `~/.pi/agent/evolution` is a versioned mirror and backup repo.
+
+Automatic hooks snapshot before and sync/commit after `memory_write`, mutating `memory_edit`, mutating `scratchpad`, `memory_curate`, learning approve/reject, session summary/handoff writes, compaction handoffs, and external `jhp-pi-memory-curator run-once`. Read-only operations do not snapshot.
+
+Tools and slash commands:
+
+- `memory_version_status` / `/memory-version-status`
+- `memory_version_snapshot` / `/memory-version-snapshot [reason]`
+- `memory_version_list` / `/memory-version-list`
+- `memory_version_restore` / `/memory-version-restore <snapshot-id> [memory|skill-drafts|all]`
+- `memory_version_push` / `/memory-version-push`
+
+Restore always creates a pre-restore snapshot first, then restores the selected target, syncs the mirror, and commits `memory: restore snapshot <id>`.
+
+Default remote is `https://github.com/LRM-Teams/pi-evolution.git`. Auto commit is on; auto push is off unless `PI_EVOLUTION_AUTO_PUSH=1` is set. The repo should be private because memory contents are committed in plaintext, including any secret accidentally written to memory.
+
 ## External Curator Service
 
 `@jhp/pi-memory` includes a CLI and pi tools for an external daily service. The service is independent of the pi process, so curation can still run when pi is closed.
@@ -178,6 +220,8 @@ CLI:
 jhp-pi-memory-curator enable --schedule 03:00
 jhp-pi-memory-curator status
 jhp-pi-memory-curator run-once
+jhp-pi-memory-curator snapshot --reason "manual backup"
+jhp-pi-memory-curator push
 jhp-pi-memory-curator disable
 ```
 
@@ -203,6 +247,12 @@ The controller uses a systemd user timer when available and falls back to cron. 
 | `PI_MEMORY_SKILL_DRAFTS` | `off`, `review` | `review` | Allow curator to propose disabled skill drafts |
 | `PI_MEMORY_AUTO_APPROVE_MEMORY` | `1`, `true`, `yes`, `on` | unset | YOLO mode for approving newly created memory proposals |
 | `PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS` | `1`, `true`, `yes`, `on` | unset | YOLO mode for creating newly proposed disabled skill drafts |
+| `PI_EVOLUTION_ENABLED` | `0`, `1`, `true`, `false` | `1` | Enable snapshot + git versioning |
+| `PI_EVOLUTION_DIR` | path | `~/.pi/agent/evolution` | Local evolution repo directory |
+| `PI_EVOLUTION_REMOTE` | URL | `https://github.com/LRM-Teams/pi-evolution.git` | Git remote for manual/optional push |
+| `PI_EVOLUTION_BRANCH` | branch | `main` | Local branch used for init/clone |
+| `PI_EVOLUTION_AUTO_COMMIT` | `0`, `1`, `true`, `false` | `1` | Commit sync/snapshot changes automatically |
+| `PI_EVOLUTION_AUTO_PUSH` | `0`, `1`, `true`, `false` | `0` | Push after commits automatically |
 
 ## Development
 
