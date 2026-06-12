@@ -140,8 +140,9 @@ Current project packages:
 - `pi-subagents`
 - `pi-lens`
 
-Project extensions are in `.pi/extensions/`. Important current extension:
+Project extensions are in `.pi/extensions/`. Important current extensions:
 
+- `pet.ts`: terminal pet UI with `/pet` subcommands, argument autocomplete for actions such as `/pet ask`, `/pet position`, and `/pet equip`, plus item drops with pity counters.
 - `memory-curator.ts`: deprecated compatibility notice only. The external curator service is managed by `@jhp/pi-memory`.
 
 ## Recommended Workflows

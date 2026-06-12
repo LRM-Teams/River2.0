@@ -33,7 +33,7 @@ import {
 	serializeConversation,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import type { Component, OverlayHandle, TUI } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, Component, OverlayHandle, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 type PetMood = "idle" | "thinking" | "tool" | "chat" | "celebrate" | "concerned";
@@ -56,6 +56,18 @@ interface PetItem {
 interface PetInventoryItem {
 	itemId: string;
 	count: number;
+}
+
+interface PetDropPity {
+	tool: number;
+	memory: number;
+	checkin: number;
+}
+
+interface PetCommandCompletion {
+	name: string;
+	description: string;
+	usage?: string;
 }
 
 interface PetStats {
@@ -81,6 +93,7 @@ interface PetProfile {
 	lastCheckInDay?: string;
 	feedCount: number;
 	inventory: PetInventoryItem[];
+	itemDropPity: PetDropPity;
 	equippedItemId?: string;
 }
 
@@ -99,11 +112,32 @@ const PET_ITEMS: PetItem[] = [
 	{ id: "violet-badge", name: "Violet Badge", rarity: "epic", glyph: "#", color: "error", trigger: "memory" },
 	{ id: "star-crown", name: "Star Crown", rarity: "legendary", glyph: "^", color: "warning", trigger: "memory" },
 ];
+const PET_COMMAND_COMPLETIONS: PetCommandCompletion[] = [
+	{ name: "on", description: "Show the pet" },
+	{ name: "off", description: "Hide the pet" },
+	{ name: "cat", description: "Switch species to cat" },
+	{ name: "dog", description: "Switch species to dog" },
+	{ name: "fox", description: "Switch species to fox" },
+	{ name: "bot", description: "Switch species to bot" },
+	{ name: "name", usage: "<name>", description: "Rename the pet" },
+	{ name: "mood", description: "Show mood, stats, and progress" },
+	{ name: "checkin", description: "Claim the daily check-in reward" },
+	{ name: "feed", description: "Feed the pet" },
+	{ name: "bag", description: "Show inventory items" },
+	{ name: "inventory", description: "Show inventory items" },
+	{ name: "equip", usage: "<item>", description: "Equip a cosmetic item" },
+	{ name: "unequip", description: "Remove the equipped item" },
+	{ name: "position", usage: "widget|overlay", description: "Move between editor widget and floating overlay" },
+	{ name: "reset", description: "Reset pet profile" },
+	{ name: "ask", usage: "<question>", description: "Ask about current context without saving the answer" },
+];
 const DAILY_CHECKIN_XP = 2;
 const FEED_XP = 1;
-const TOOL_DROP_CHANCE = 0.015;
-const MEMORY_DROP_CHANCE = 0.05;
-const CHECKIN_DROP_CHANCE = 0.08;
+const TOOL_DROP_CHANCE = 0.04;
+const MEMORY_DROP_CHANCE = 0.12;
+const CHECKIN_DROP_CHANCE = 0.2;
+const DROP_PITY_LIMITS: Record<PetItemTrigger, number> = { tool: 25, memory: 8, checkin: 7 };
+const RARITY_WEIGHTS: Record<PetItemRarity, number> = { common: 80, rare: 16, epic: 3.5, legendary: 0.5 };
 
 const PET_ASK_PROMPT = `You are a tiny terminal pet companion inside pi.
 Answer the user's question using the provided conversation context.
@@ -336,6 +370,7 @@ function defaultProfile(): PetProfile {
 		enabled: true,
 		feedCount: 0,
 		inventory: [],
+		itemDropPity: { tool: 0, memory: 0, checkin: 0 },
 	};
 }
 
@@ -357,6 +392,7 @@ function normalizeProfile(value: unknown): PetProfile | undefined {
 		typeof partial.equippedItemId === "string" && PET_ITEMS.some((item) => item.id === partial.equippedItemId)
 			? partial.equippedItemId
 			: undefined;
+	const itemDropPity = normalizeDropPity(partial.itemDropPity, fallback.itemDropPity);
 
 	return {
 		name: typeof partial.name === "string" && partial.name.trim() ? partial.name.trim().slice(0, 24) : fallback.name,
@@ -379,7 +415,17 @@ function normalizeProfile(value: unknown): PetProfile | undefined {
 		lastCheckInDay: typeof partial.lastCheckInDay === "string" ? partial.lastCheckInDay : undefined,
 		feedCount: safeCount(partial.feedCount, fallback.feedCount),
 		inventory,
+		itemDropPity,
 		equippedItemId,
+	};
+}
+
+function normalizeDropPity(value: unknown, fallback: PetDropPity): PetDropPity {
+	const partial = value && typeof value === "object" ? (value as Partial<PetDropPity>) : {};
+	return {
+		tool: safeCount(partial.tool, fallback.tool),
+		memory: safeCount(partial.memory, fallback.memory),
+		checkin: safeCount(partial.checkin, fallback.checkin),
 	};
 }
 
@@ -461,6 +507,7 @@ function createStatusCard(profile: PetProfile): string {
 		`stats: focus ${profile.stats.focus}/10, energy ${profile.stats.energy}/10, curiosity ${profile.stats.curiosity}/10`,
 		`       sass ${profile.stats.sass}/10, loyalty ${profile.stats.loyalty}/10`,
 		`activity: ${profile.interactions} chats, ${profile.toolsCompleted} tools, feeds ${profile.feedCount}`,
+		`drops: tools ${profile.itemDropPity.tool}/${DROP_PITY_LIMITS.tool}, memory ${profile.itemDropPity.memory}/${DROP_PITY_LIMITS.memory}, check-in ${profile.itemDropPity.checkin}/${DROP_PITY_LIMITS.checkin}`,
 		`bag: ${itemCount} items${equipped ? `, equipped ${equipped.name}` : ""}  check-in: ${profile.lastCheckInDay ?? "never"}`,
 	].join("\n");
 }
@@ -550,8 +597,11 @@ async function askPet(question: string, ctx: ExtensionCommandContext): Promise<s
 
 		const generate = async () => {
 			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
-			if (!auth.ok || !auth.apiKey) {
-				throw new Error(auth.ok ? `No API key for ${ctx.model!.provider}` : auth.error);
+			if (auth.ok === false) {
+				throw new Error(auth.error);
+			}
+			if (!auth.apiKey) {
+				throw new Error(`No API key for ${ctx.model!.provider}`);
 			}
 
 			const conversationText = serializeConversation(convertToLlm(contextMessages));
@@ -688,17 +738,29 @@ export default function petExtension(pi: ExtensionAPI) {
 		else profile.inventory.push({ itemId: item.id, count: 1 });
 	}
 
+	function rollWeightedItem(candidates: PetItem[]): PetItem | undefined {
+		const weighted = candidates.map((item) => ({ item, weight: RARITY_WEIGHTS[item.rarity] ?? 1 }));
+		const totalWeight = weighted.reduce((total, entry) => total + entry.weight, 0);
+		if (totalWeight <= 0) return candidates[0];
+
+		let roll = Math.random() * totalWeight;
+		for (const entry of weighted) {
+			roll -= entry.weight;
+			if (roll <= 0) return entry.item;
+		}
+		return weighted[weighted.length - 1]?.item;
+	}
+
 	function rollDrop(trigger: PetItemTrigger, chance: number): PetItem | undefined {
-		if (Math.random() >= chance) return undefined;
+		profile.itemDropPity[trigger] = safeCount(profile.itemDropPity[trigger], 0) + 1;
+		const forced = profile.itemDropPity[trigger] >= DROP_PITY_LIMITS[trigger];
+		if (!forced && Math.random() >= chance) return undefined;
+
 		const candidates = PET_ITEMS.filter((item) => item.trigger === trigger);
 		if (candidates.length === 0) return undefined;
-		const roll = Math.random();
-		const maxRarity: PetItemRarity =
-			roll < 0.82 ? "common" : roll < 0.97 ? "rare" : roll < 0.995 ? "epic" : "legendary";
-		const rarityOrder: PetItemRarity[] = ["common", "rare", "epic", "legendary"];
-		const maxIndex = rarityOrder.indexOf(maxRarity);
-		const pool = candidates.filter((item) => rarityOrder.indexOf(item.rarity) <= maxIndex);
-		return pool[Math.floor(Math.random() * pool.length)];
+		const item = rollWeightedItem(candidates);
+		if (item) profile.itemDropPity[trigger] = 0;
+		return item;
 	}
 
 	function maybeDropItem(trigger: PetItemTrigger, chance: number): PetItem | undefined {
@@ -706,7 +768,69 @@ export default function petExtension(pi: ExtensionAPI) {
 		if (!item) return undefined;
 		addItem(item);
 		setReply(`Found ${item.rarity} item: ${item.name} ${item.glyph}`, "celebrate", 7000);
+		saveProfile();
 		return item;
+	}
+
+	function getPetArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+		const trimmed = argumentPrefix.trimStart();
+		const firstSpace = trimmed.indexOf(" ");
+
+		if (firstSpace === -1) {
+			const lower = trimmed.toLowerCase();
+			const matches = PET_COMMAND_COMPLETIONS.filter((command) => command.name.startsWith(lower)).map((command) => ({
+				value: command.usage ? `${command.name} ` : command.name,
+				label: command.usage ? `${command.name} ${command.usage}` : command.name,
+				description: command.description,
+			}));
+			return matches.length > 0 ? matches : null;
+		}
+
+		const subcommand = trimmed.slice(0, firstSpace).toLowerCase();
+		const subArg = trimmed
+			.slice(firstSpace + 1)
+			.trimStart()
+			.toLowerCase();
+
+		const usageCompletion = PET_COMMAND_COMPLETIONS.find((command) => command.name === subcommand && command.usage);
+		if (usageCompletion && subArg.length === 0 && subcommand !== "position" && subcommand !== "equip") {
+			return [
+				{
+					value: `${subcommand} `,
+					label: usageCompletion.usage ?? "",
+					description: usageCompletion.description,
+				},
+			];
+		}
+
+		if (subcommand === "position") {
+			return filterPetCompletions(subArg, [
+				{ value: "position widget", label: "widget", description: "Show pet above the editor" },
+				{ value: "position overlay", label: "overlay", description: "Show pet as a bottom-right overlay" },
+			]);
+		}
+
+		if (subcommand === "equip") {
+			const items = profile.inventory
+				.map((owned) => getPetItem(owned.itemId))
+				.filter((item) => item !== undefined)
+				.map((item) => ({
+					value: `equip ${item.id}`,
+					label: item.name,
+					description: `${item.rarity} item (${item.id})`,
+				}));
+			return filterPetCompletions(subArg, items);
+		}
+
+		return null;
+	}
+
+	function filterPetCompletions(prefix: string, items: AutocompleteItem[]): AutocompleteItem[] | null {
+		const matches = items.filter((item) => {
+			const text = `${item.value} ${item.label} ${item.description ?? ""}`.toLowerCase();
+			return text.includes(prefix);
+		});
+		return matches.length > 0 ? matches : null;
 	}
 
 	function createBagCard(): string {
@@ -865,6 +989,7 @@ export default function petExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("pet", {
 		description: "Show, hide, switch, talk to, or ask the terminal pet about current context.",
+		getArgumentCompletions: getPetArgumentCompletions,
 		handler: async (args, ctx) => {
 			const raw = args.trim();
 			const next = raw.toLowerCase();
