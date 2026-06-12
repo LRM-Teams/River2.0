@@ -15,7 +15,7 @@ pi install npm:pi-subagents
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.5.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.6.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
@@ -41,7 +41,7 @@ Debug-only extensions are intentionally excluded:
 
 ## Team Model Setup
 
-The bootstrap script asks for an API key and writes:
+The bootstrap script can be run with `curl | bash`: it reads the API key from the terminal instead of stdin. It asks for an API key and writes:
 
 - Provider: OpenAI-compatible `openai`
 - Base URL: `https://claude-code.club/openai/v1`
@@ -79,7 +79,7 @@ Useful commands:
 /memory-version-push
 ```
 
-Default evolution remote: `https://github.com/LRM-Teams/pi-evolution.git`. Keep it private because it stores memory plaintext. Set `PI_EVOLUTION_AUTO_PUSH=1` only if automatic remote sync is desired.
+Memory evolution is local-only by default and does not configure a shared remote. If a user wants backup sync, set `PI_EVOLUTION_REMOTE` to their own private repo before bootstrap/setup, or add a personal remote later with `git -C ~/.pi/agent/evolution remote add origin <url>`. Set `PI_EVOLUTION_AUTO_PUSH=1` only if automatic remote sync is desired.
 
 ## Goal Mode
 

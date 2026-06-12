@@ -10,21 +10,39 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-printf "OpenAI-compatible API key: " >&2
-stty_state=""
-if command -v stty >/dev/null 2>&1; then
-  stty_state=$(stty -g 2>/dev/null || true)
-  stty -echo 2>/dev/null || true
-fi
-IFS= read -r TEAM_API_KEY
-if [ -n "$stty_state" ]; then
-  stty "$stty_state" 2>/dev/null || true
-fi
-printf "\n" >&2
+prompt_secret() {
+  local prompt="$1"
+  local var_name="$2"
+  local value=""
+  local stty_state=""
 
+  if [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+    echo "$prompt is required. Re-run from a terminal or set $var_name in the environment." >&2
+    return 1
+  fi
+
+  printf "%s: " "$prompt" >/dev/tty
+  if command -v stty >/dev/null 2>&1; then
+    stty_state=$(stty -g </dev/tty 2>/dev/null || true)
+    stty -echo </dev/tty 2>/dev/null || true
+  fi
+  IFS= read -r value </dev/tty
+  if [ -n "$stty_state" ]; then
+    stty "$stty_state" </dev/tty 2>/dev/null || true
+  fi
+  printf "\n" >/dev/tty
+
+  if [ -z "$value" ]; then
+    echo "$prompt is required." >&2
+    return 1
+  fi
+
+  printf -v "$var_name" '%s' "$value"
+}
+
+TEAM_API_KEY="${TEAM_API_KEY:-}"
 if [ -z "$TEAM_API_KEY" ]; then
-  echo "API key is required." >&2
-  exit 1
+  prompt_secret "OpenAI-compatible API key" TEAM_API_KEY
 fi
 
 echo "Installing Pi CLI..."
@@ -95,7 +113,8 @@ WORKSPACE_DIR="${PI_WORKSPACE_DIR:-$PWD}"
 WORKSPACE_PI_DIR="$WORKSPACE_DIR/.pi"
 MEMORY_DIR="$AGENT_DIR/memory"
 EVOLUTION_DIR="${PI_EVOLUTION_DIR:-$AGENT_DIR/evolution}"
-EVOLUTION_REMOTE="${PI_EVOLUTION_REMOTE:-https://github.com/LRM-Teams/pi-evolution.git}"
+EVOLUTION_REMOTE="${PI_EVOLUTION_REMOTE:-}"
+LEGACY_SHARED_EVOLUTION_REMOTE="https://github.com/LRM-Teams/pi-evolution.git"
 EVOLUTION_BRANCH="${PI_EVOLUTION_BRANCH:-main}"
 SUITE_SKILLS_DIR="${PI_SUITE_SKILLS_DIR:-$AGENT_DIR/npm/node_modules/@lebronj/pi-suite/skills}"
 
@@ -122,17 +141,32 @@ setup_evolution_repo() {
   fi
   if [ ! -e "$EVOLUTION_DIR" ]; then
     mkdir -p "$(dirname "$EVOLUTION_DIR")"
-    if ! git clone --branch "$EVOLUTION_BRANCH" "$EVOLUTION_REMOTE" "$EVOLUTION_DIR"; then
+    if [ -n "$EVOLUTION_REMOTE" ]; then
+      if ! git clone --branch "$EVOLUTION_BRANCH" "$EVOLUTION_REMOTE" "$EVOLUTION_DIR"; then
+        mkdir -p "$EVOLUTION_DIR"
+        git -C "$EVOLUTION_DIR" init -b "$EVOLUTION_BRANCH" 2>/dev/null || git -C "$EVOLUTION_DIR" init
+        git -C "$EVOLUTION_DIR" checkout -B "$EVOLUTION_BRANCH" >/dev/null 2>&1 || true
+        git -C "$EVOLUTION_DIR" remote add origin "$EVOLUTION_REMOTE" 2>/dev/null || true
+      fi
+    else
       mkdir -p "$EVOLUTION_DIR"
       git -C "$EVOLUTION_DIR" init -b "$EVOLUTION_BRANCH" 2>/dev/null || git -C "$EVOLUTION_DIR" init
       git -C "$EVOLUTION_DIR" checkout -B "$EVOLUTION_BRANCH" >/dev/null 2>&1 || true
-      git -C "$EVOLUTION_DIR" remote add origin "$EVOLUTION_REMOTE" 2>/dev/null || true
+    fi
+  elif [ -z "$EVOLUTION_REMOTE" ]; then
+    current_remote=$(git -C "$EVOLUTION_DIR" remote get-url origin 2>/dev/null || true)
+    if [ "$current_remote" = "$LEGACY_SHARED_EVOLUTION_REMOTE" ]; then
+      git -C "$EVOLUTION_DIR" remote remove origin 2>/dev/null || true
     fi
   fi
   mkdir -p "$EVOLUTION_DIR/memory" "$EVOLUTION_DIR/skill-drafts" "$EVOLUTION_DIR/snapshots" "$EVOLUTION_DIR/manifests"
   echo "Memory evolution repo ready: $EVOLUTION_DIR"
-  echo "Remote: $EVOLUTION_REMOTE"
-  echo "Auto push remains off by default. Use /memory-version-push or PI_EVOLUTION_AUTO_PUSH=1."
+  if [ -n "$EVOLUTION_REMOTE" ]; then
+    echo "Remote: $EVOLUTION_REMOTE"
+    echo "Auto push remains off by default. Use /memory-version-push or PI_EVOLUTION_AUTO_PUSH=1."
+  else
+    echo "Remote: none (local-only by default). Set PI_EVOLUTION_REMOTE to a personal private repo if you want backup sync."
+  fi
 }
 
 setup_evolution_repo

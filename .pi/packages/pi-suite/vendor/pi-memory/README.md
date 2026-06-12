@@ -208,7 +208,7 @@ Tools and slash commands:
 
 Restore always creates a pre-restore snapshot first, then restores the selected target, syncs the mirror, and commits `memory: restore snapshot <id>`.
 
-Default remote is `https://github.com/LRM-Teams/pi-evolution.git`. Auto commit is on; auto push is off unless `PI_EVOLUTION_AUTO_PUSH=1` is set. The repo should be private because memory contents are committed in plaintext, including any secret accidentally written to memory.
+No remote is configured by default. This keeps each user's memory evolution local to their machine and avoids writing personal memory into a shared team repo. If remote backup is desired, set `PI_EVOLUTION_REMOTE` to a personal private repo before setup, or add `origin` manually later. Auto commit is on; auto push is off unless `PI_EVOLUTION_AUTO_PUSH=1` is set. Any remote should be private because memory contents are committed in plaintext, including any secret accidentally written to memory.
 
 ## External Curator Service
 
@@ -249,7 +249,7 @@ The controller uses a systemd user timer when available and falls back to cron. 
 | `PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS` | `1`, `true`, `yes`, `on` | unset | YOLO mode for creating newly proposed disabled skill drafts |
 | `PI_EVOLUTION_ENABLED` | `0`, `1`, `true`, `false` | `1` | Enable snapshot + git versioning |
 | `PI_EVOLUTION_DIR` | path | `~/.pi/agent/evolution` | Local evolution repo directory |
-| `PI_EVOLUTION_REMOTE` | URL | `https://github.com/LRM-Teams/pi-evolution.git` | Git remote for manual/optional push |
+| `PI_EVOLUTION_REMOTE` | URL | unset | Optional personal private Git remote for manual/optional push |
 | `PI_EVOLUTION_BRANCH` | branch | `main` | Local branch used for init/clone |
 | `PI_EVOLUTION_AUTO_COMMIT` | `0`, `1`, `true`, `false` | `1` | Commit sync/snapshot changes automatically |
 | `PI_EVOLUTION_AUTO_PUSH` | `0`, `1`, `true`, `false` | `0` | Push after commits automatically |

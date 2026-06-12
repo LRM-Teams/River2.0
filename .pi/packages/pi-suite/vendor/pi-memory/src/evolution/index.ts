@@ -1,4 +1,4 @@
-export { DEFAULT_EVOLUTION_BRANCH, DEFAULT_EVOLUTION_REMOTE, resolveEvolutionConfig, type EvolutionConfig } from "./config.ts";
+export { DEFAULT_EVOLUTION_BRANCH, DEFAULT_EVOLUTION_REMOTE, LEGACY_SHARED_EVOLUTION_REMOTE, resolveEvolutionConfig, type EvolutionConfig } from "./config.ts";
 export { commitEvolutionChanges, ensureEvolutionRepo, getEvolutionGitStatus, pushEvolution, type GitCommitResult, type GitStatus } from "./git.ts";
 export { buildManifest, createSnapshotId, listManifests, readManifest, writeManifest, type EvolutionManifest } from "./manifest.ts";
 export { restoreEvolutionSnapshot, type RestoreResult, type RestoreTarget } from "./restore.ts";

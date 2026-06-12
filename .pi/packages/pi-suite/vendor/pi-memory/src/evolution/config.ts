@@ -5,7 +5,7 @@ export interface EvolutionConfig {
 	autoCommit: boolean;
 	autoPush: boolean;
 	repoDir: string;
-	remote: string;
+	remote: string | null;
 	branch: string;
 	memoryDir: string;
 	skillDraftsDir: string;
@@ -27,7 +27,8 @@ type EvolutionEnv = Partial<
 	>
 >;
 
-export const DEFAULT_EVOLUTION_REMOTE = "https://github.com/LRM-Teams/pi-evolution.git";
+export const DEFAULT_EVOLUTION_REMOTE = "";
+export const LEGACY_SHARED_EVOLUTION_REMOTE = "https://github.com/LRM-Teams/pi-evolution.git";
 export const DEFAULT_EVOLUTION_BRANCH = "main";
 
 function homeDir(env: EvolutionEnv): string {
@@ -55,7 +56,7 @@ export function resolveEvolutionConfig(memoryDir: string, env: EvolutionEnv = pr
 		autoCommit: truthy(env.PI_EVOLUTION_AUTO_COMMIT, true),
 		autoPush: truthy(env.PI_EVOLUTION_AUTO_PUSH, false),
 		repoDir: path.resolve(expandHome(env.PI_EVOLUTION_DIR || path.join(agentDir, "evolution"), env)),
-		remote: env.PI_EVOLUTION_REMOTE || DEFAULT_EVOLUTION_REMOTE,
+		remote: env.PI_EVOLUTION_REMOTE?.trim() || null,
 		branch: env.PI_EVOLUTION_BRANCH || DEFAULT_EVOLUTION_BRANCH,
 		memoryDir,
 		skillDraftsDir: path.join(agentDir, "skill-drafts"),

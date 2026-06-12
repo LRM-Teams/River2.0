@@ -36,6 +36,7 @@ export { disableCuratorService, enableCuratorService, getCuratorServiceStatus, r
 export {
 	DEFAULT_EVOLUTION_BRANCH,
 	DEFAULT_EVOLUTION_REMOTE,
+	LEGACY_SHARED_EVOLUTION_REMOTE,
 	commitEvolutionChanges,
 	createEvolutionSnapshot,
 	createSnapshotId,

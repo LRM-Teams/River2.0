@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { EvolutionConfig } from "./config.ts";
+import { LEGACY_SHARED_EVOLUTION_REMOTE, type EvolutionConfig } from "./config.ts";
 import { pathExists } from "./file-utils.ts";
 
 export interface GitStatus {
@@ -56,14 +56,21 @@ export function ensureEvolutionRepo(config: EvolutionConfig): void {
 	}
 	if (!pathExists(config.repoDir)) {
 		fs.mkdirSync(path.dirname(config.repoDir), { recursive: true });
-		try {
-			execFileSync("git", ["clone", "--branch", config.branch, config.remote, config.repoDir], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
-		} catch {
+		if (config.remote) {
+			try {
+				execFileSync("git", ["clone", "--branch", config.branch, config.remote, config.repoDir], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+			} catch {
+				fs.mkdirSync(config.repoDir, { recursive: true });
+				runGit(config.repoDir, ["init", "-b", config.branch], { allowFailure: true });
+				if (!isGitRepo(config.repoDir)) runGit(config.repoDir, ["init"]);
+				runGit(config.repoDir, ["checkout", "-B", config.branch]);
+				runGit(config.repoDir, ["remote", "add", "origin", config.remote], { allowFailure: true });
+			}
+		} else {
 			fs.mkdirSync(config.repoDir, { recursive: true });
 			runGit(config.repoDir, ["init", "-b", config.branch], { allowFailure: true });
 			if (!isGitRepo(config.repoDir)) runGit(config.repoDir, ["init"]);
 			runGit(config.repoDir, ["checkout", "-B", config.branch]);
-			runGit(config.repoDir, ["remote", "add", "origin", config.remote], { allowFailure: true });
 		}
 	} else if (!isGitRepo(config.repoDir)) {
 		fs.mkdirSync(config.repoDir, { recursive: true });
@@ -73,8 +80,12 @@ export function ensureEvolutionRepo(config: EvolutionConfig): void {
 	}
 
 	const remote = runGit(config.repoDir, ["remote", "get-url", "origin"], { allowFailure: true });
-	if (!remote) runGit(config.repoDir, ["remote", "add", "origin", config.remote]);
-	else if (remote !== config.remote) runGit(config.repoDir, ["remote", "set-url", "origin", config.remote]);
+	if (config.remote) {
+		if (!remote) runGit(config.repoDir, ["remote", "add", "origin", config.remote]);
+		else if (remote !== config.remote) runGit(config.repoDir, ["remote", "set-url", "origin", config.remote]);
+	} else if (remote === LEGACY_SHARED_EVOLUTION_REMOTE) {
+		runGit(config.repoDir, ["remote", "remove", "origin"], { allowFailure: true });
+	}
 
 	const branch = runGit(config.repoDir, ["branch", "--show-current"], { allowFailure: true });
 	if (!branch) runGit(config.repoDir, ["checkout", "-B", config.branch]);
@@ -127,6 +138,10 @@ export function commitEvolutionChanges(config: EvolutionConfig, message: string)
 
 export function pushEvolution(config: EvolutionConfig): string {
 	ensureEvolutionRepo(config);
+	const remote = runGit(config.repoDir, ["remote", "get-url", "origin"], { allowFailure: true });
+	if (!remote) {
+		return "No evolution remote configured. Add a personal private remote with `git -C ~/.pi/agent/evolution remote add origin <url>` or set PI_EVOLUTION_REMOTE before setup.";
+	}
 	const branch = runGit(config.repoDir, ["branch", "--show-current"], { allowFailure: true }) || config.branch;
 	return runGit(config.repoDir, ["push", "-u", "origin", branch]);
 }

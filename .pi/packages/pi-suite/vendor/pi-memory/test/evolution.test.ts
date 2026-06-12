@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { test } from "node:test";
 import {
 	createEvolutionSnapshot,
 	getEvolutionGitStatus,
+	LEGACY_SHARED_EVOLUTION_REMOTE,
 	listManifests,
 	resolveEvolutionConfig,
 	restoreEvolutionSnapshot,
@@ -24,7 +26,6 @@ function testConfig() {
 		repoDir,
 		config: resolveEvolutionConfig(memoryDir, {
 			PI_EVOLUTION_DIR: repoDir,
-			PI_EVOLUTION_REMOTE: "https://example.invalid/pi-evolution.git",
 			PI_EVOLUTION_AUTO_PUSH: "0",
 			HOME: root,
 		}),
@@ -48,6 +49,17 @@ test("creates snapshot, manifest, current mirrors, and git commit", () => {
 	assert.equal(existsSync(join(repoDir, "manifests", `${result.manifest.id}.json`)), true);
 	assert.equal(listManifests(config, 1)[0].reason, "test snapshot");
 	assert.match(getEvolutionGitStatus(config).lastCommit || "", /memory: test snapshot/);
+});
+
+test("local-only config removes the legacy shared team remote", () => {
+	const { config, repoDir } = testConfig();
+	mkdirSync(repoDir, { recursive: true });
+	execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "ignore" });
+	execFileSync("git", ["remote", "add", "origin", LEGACY_SHARED_EVOLUTION_REMOTE], { cwd: repoDir, stdio: "ignore" });
+
+	createEvolutionSnapshot(config, { reason: "local migration", trigger: "test", commitMessage: "memory: local migration" });
+
+	assert.equal(getEvolutionGitStatus(config).remote, null);
 });
 
 test("sync does not create empty commits when nothing changed", () => {

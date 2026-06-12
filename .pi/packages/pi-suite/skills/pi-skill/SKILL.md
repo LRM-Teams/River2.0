@@ -82,7 +82,7 @@ Memory versioning:
 
 - Runtime memory remains authoritative at `~/.pi/agent/memory`; disabled skill drafts remain authoritative at `~/.pi/agent/skill-drafts`.
 - Versioning mirror and snapshots live at `~/.pi/agent/evolution` by default.
-- Default remote is `https://github.com/LRM-Teams/pi-evolution.git`; it should be private because memory is committed in plaintext.
+- No remote is configured by default; memory evolution stays local per user/machine unless the user adds a personal private remote.
 - Automatic local snapshot + commit is enabled by default; automatic push is disabled unless `PI_EVOLUTION_AUTO_PUSH=1`.
 - Snapshots run before mutating memory tools, curator runs, learning approve/reject, session summaries/handoffs, compact handoffs, restore, and external curator `run-once`.
 - Slash commands: `/memory-version-status`, `/memory-version-snapshot [reason]`, `/memory-version-list`, `/memory-version-restore <snapshot-id> [memory|skill-drafts|all]`, `/memory-version-push`.
@@ -121,7 +121,7 @@ Useful memory environment variables:
 - `PI_MEMORY_CURATOR_STARTUP_HINT=0`: hide the disabled-curator startup hint.
 - `PI_EVOLUTION_ENABLED=0`: disable snapshot + git versioning.
 - `PI_EVOLUTION_DIR`: override evolution repo directory; default `~/.pi/agent/evolution`.
-- `PI_EVOLUTION_REMOTE`: override remote; default `https://github.com/LRM-Teams/pi-evolution.git`.
+- `PI_EVOLUTION_REMOTE`: optional personal private Git remote; unset by default.
 - `PI_EVOLUTION_BRANCH`: override branch; default `main`.
 - `PI_EVOLUTION_AUTO_COMMIT=0`: disable automatic local commits.
 - `PI_EVOLUTION_AUTO_PUSH=1`: push automatically after commits.
