@@ -1,6 +1,6 @@
 {
   "name": "@lebronj/pi-suite",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "JHP's Pi extension suite for team coding workflows",
   "type": "module",
   "keywords": [

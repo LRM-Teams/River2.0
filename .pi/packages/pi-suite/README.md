@@ -15,7 +15,7 @@ pi install npm:pi-subagents
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.6.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.7.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
