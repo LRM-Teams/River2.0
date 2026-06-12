@@ -142,7 +142,7 @@ Current project packages:
 
 Project extensions are in `.pi/extensions/`. Important current extensions:
 
-- `pet.ts`: terminal pet UI with `/pet` subcommands, argument autocomplete for actions such as `/pet ask`, `/pet position`, and `/pet equip`, plus item drops with pity counters.
+- `pet.ts`: terminal pet UI with `/pet` subcommands, argument autocomplete for actions such as `/pet ask`, `/pet position`, and `/pet equip`, plus item drops with pity counters. Pet profile/inventory is durably mirrored at `~/.pi/agent/pet-profile.json` so equipment survives `/new` and future sessions.
 - `memory-curator.ts`: deprecated compatibility notice only. The external curator service is managed by `@jhp/pi-memory`.
 
 ## Recommended Workflows

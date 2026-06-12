@@ -23,6 +23,9 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { complete, type Message } from "@earendil-works/pi-ai";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import {
 	BorderedLoader,
 	convertToLlm,
@@ -112,6 +115,7 @@ const PET_ITEMS: PetItem[] = [
 	{ id: "violet-badge", name: "Violet Badge", rarity: "epic", glyph: "#", color: "error", trigger: "memory" },
 	{ id: "star-crown", name: "Star Crown", rarity: "legendary", glyph: "^", color: "warning", trigger: "memory" },
 ];
+const PERSISTED_PET_PROFILE_FILE = join(homedir(), ".pi", "agent", "pet-profile.json");
 const PET_COMMAND_COMPLETIONS: PetCommandCompletion[] = [
 	{ name: "on", description: "Show the pet" },
 	{ name: "off", description: "Hide the pet" },
@@ -244,6 +248,105 @@ const PET_ART: Record<PetKind, Record<PetMood | "blink" | "sleep", string[][]>> 
 	},
 };
 
+function colorItemGlyph(item: PetItem, theme: Theme, glyph = item.glyph): string {
+	return item.rarity === "common" ? glyph : theme.fg(item.color, glyph);
+}
+
+function replaceFirstMatch(lines: string[], replacements: Array<[string, string]>): string[] {
+	return lines.map((line) => {
+		for (const [from, to] of replacements) {
+			if (line.includes(from)) return line.replace(from, to);
+		}
+		return line;
+	});
+}
+
+function chestReplacements(species: PetKind, mark: string): Array<[string, string]> {
+	switch (species) {
+		case "cat":
+			return [["> ^ <", `> ${mark} <`]];
+		case "dog":
+			return [["\\_^_/", `\\_${mark}_/`]];
+		case "fox":
+			return [["\\ v /", `\\ ${mark} /`]];
+		case "bot":
+			return [["|___|", `|_${mark}_|`]];
+	}
+}
+
+function scarfReplacements(species: PetKind): Array<[string, string]> {
+	switch (species) {
+		case "cat":
+			return [["> ^ <", "~ ^ ~"]];
+		case "dog":
+			return [["\\_^_/", "~_^_~"]];
+		case "fox":
+			return [["\\ v /", "~ v ~"]];
+		case "bot":
+			return [["|___|", "|~~~|"]];
+	}
+}
+
+function lensReplacements(species: PetKind, lens: string): Array<[string, string]> {
+	switch (species) {
+		case "cat":
+		case "fox":
+			return [
+				["( o.o )", `( ${lens}.o )`],
+				["( -.- )", `( ${lens}.- )`],
+				["( ^.^ )", `( ${lens}.^ )`],
+				["( >.< )", `( ${lens}.< )`],
+			];
+		case "dog":
+			return [
+				["( o o )", `( ${lens} o )`],
+				["( - - )", `( ${lens} - )`],
+				["( ^ ^ )", `( ${lens} ^ )`],
+				["( > < )", `( ${lens} < )`],
+			];
+		case "bot":
+			return [
+				["[ o_o ]", `[ ${lens}_o ]`],
+				["[ -_- ]", `[ ${lens}_- ]`],
+				["[ ^_^ ]", `[ ${lens}_^ ]`],
+				["[ >_< ]", `[ ${lens}_< ]`],
+			];
+	}
+}
+
+function addItemParticles(lines: string[], item: PetItem, theme: Theme, frame: number): string[] {
+	if (item.rarity !== "epic" && item.rarity !== "legendary") return lines;
+	const glyphs = item.rarity === "legendary" ? ["*", "+", "."] : ["*", "."];
+	const left = theme.fg(item.color, glyphs[frame % glyphs.length] ?? "*");
+	const right = theme.fg(item.color, glyphs[(frame + 1) % glyphs.length] ?? "+");
+	if (item.rarity === "legendary") return [`    ${left} ${colorItemGlyph(item, theme, "^")} ${right}`, ...lines];
+	return lines.map((line, index) => (index === 0 ? `${left} ${line} ${right}` : line));
+}
+
+function decoratePetArt(species: PetKind, art: string[], item: PetItem | undefined, theme: Theme, frame: number): string[] {
+	if (!item) return [...art];
+	const mark = colorItemGlyph(item, theme);
+	let lines = [...art];
+
+	switch (item.id) {
+		case "memory-lens":
+			lines = replaceFirstMatch(lines, lensReplacements(species, mark));
+			break;
+		case "green-scarf":
+			lines = replaceFirstMatch(lines, scarfReplacements(species));
+			break;
+		case "tin-bell":
+		case "amber-token":
+		case "violet-badge":
+			lines = replaceFirstMatch(lines, chestReplacements(species, mark));
+			break;
+		case "star-crown":
+			break;
+	}
+
+	return addItemParticles(lines, item, theme, frame);
+}
+
 class PetComponent implements Component {
 	private profile: PetProfile;
 	private mood: PetMood = "idle";
@@ -299,9 +402,10 @@ class PetComponent implements Component {
 	render(width: number): string[] {
 		const pose = this.getPose();
 		const frames = PET_ART[this.profile.species][pose];
-		const art = frames[this.frame % frames.length] ?? frames[0];
+		const baseArt = frames[this.frame % frames.length] ?? frames[0];
 		const equipped = getPetItem(this.profile.equippedItemId);
-		const charm = equipped ? ` ${this.theme.fg(equipped.color, equipped.glyph)}` : "";
+		const art = decoratePetArt(this.profile.species, baseArt, equipped, this.theme, this.frame);
+		const charm = equipped ? ` ${colorItemGlyph(equipped, this.theme)}` : "";
 		const title = `${this.profile.name} ${this.profile.rarity} ${this.profile.personality}`;
 		const label = this.theme.fg("accent", `pet:${this.profile.species}`);
 		const mood = this.theme.fg("dim", this.mood);
@@ -372,6 +476,23 @@ function defaultProfile(): PetProfile {
 		inventory: [],
 		itemDropPity: { tool: 0, memory: 0, checkin: 0 },
 	};
+}
+
+function readPersistedProfile(): PetProfile | undefined {
+	try {
+		return normalizeProfile(JSON.parse(readFileSync(PERSISTED_PET_PROFILE_FILE, "utf8")));
+	} catch {
+		return undefined;
+	}
+}
+
+function writePersistedProfile(profile: PetProfile): void {
+	try {
+		mkdirSync(dirname(PERSISTED_PET_PROFILE_FILE), { recursive: true });
+		writeFileSync(PERSISTED_PET_PROFILE_FILE, `${JSON.stringify(profile, undefined, 2)}\n`, "utf8");
+	} catch {
+		// Session-local pet state still works if the durable profile cannot be written.
+	}
 }
 
 function normalizeProfile(value: unknown): PetProfile | undefined {
@@ -655,16 +776,26 @@ export default function petExtension(pi: ExtensionAPI) {
 	let agentRunning = false;
 
 	function saveProfile(): void {
+		writePersistedProfile(profile);
 		pi.appendEntry(PET_PROFILE_TYPE, profile);
 	}
 
 	function restoreProfile(ctx: ExtensionContext): void {
+		const durableProfile = readPersistedProfile();
+		if (durableProfile) {
+			profile = durableProfile;
+			return;
+		}
+
 		const entries = ctx.sessionManager.getEntries();
 		for (let i = entries.length - 1; i >= 0; i--) {
 			const entry = entries[i];
 			if (entry.type !== "custom" || entry.customType !== PET_PROFILE_TYPE) continue;
 			const saved = normalizeProfile(entry.data);
-			if (saved) profile = saved;
+			if (saved) {
+				profile = saved;
+				writePersistedProfile(profile);
+			}
 			return;
 		}
 	}
