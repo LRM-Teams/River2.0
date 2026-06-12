@@ -26,6 +26,7 @@
  */
 
 import { type ExecFileOptions, execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { complete, type Message, StringEnum } from "@earendil-works/pi-ai";
@@ -89,6 +90,7 @@ let USER_FILE = path.join(MEMORY_DIR, "USER.md");
 let STATE_FILE = path.join(MEMORY_DIR, "STATE.md");
 let REVIEW_FILE = path.join(MEMORY_DIR, "REVIEW.md");
 let SCRATCHPAD_FILE = path.join(MEMORY_DIR, "SCRATCHPAD.md");
+let LEARNING_STATE_FILE = path.join(MEMORY_DIR, ".learning-state.json");
 let DAILY_DIR = path.join(MEMORY_DIR, "daily");
 let SKILL_DRAFTS_DIR = path.join(path.dirname(MEMORY_DIR), "skill-drafts");
 
@@ -104,6 +106,7 @@ export function _setBaseDir(baseDir: string) {
 	STATE_FILE = path.join(baseDir, "STATE.md");
 	REVIEW_FILE = path.join(baseDir, "REVIEW.md");
 	SCRATCHPAD_FILE = path.join(baseDir, "SCRATCHPAD.md");
+	LEARNING_STATE_FILE = path.join(baseDir, ".learning-state.json");
 	DAILY_DIR = path.join(baseDir, "daily");
 	SKILL_DRAFTS_DIR = path.join(path.dirname(baseDir), "skill-drafts");
 }
@@ -562,9 +565,9 @@ function shouldKeepLearningCandidate(confidence: "low" | "medium" | "high", env:
 	return confidenceRank(confidence) >= confidenceRank(getMemoryLearningMinConfidence(env));
 }
 
-function buildLearningExtractorPrompt(conversationText: string, truncated: boolean, totalChars: number): string {
+function buildLearningExtractorPrompt(conversationText: string, truncated: boolean, totalChars: number, sourceLabel = "session transcript"): string {
 	const lines = [
-		"Extract zero or more review candidates from this session transcript.",
+		`Extract zero or more review candidates from this ${sourceLabel}.`,
 		"Return JSON exactly shaped as: {\"candidates\":[{\"kind\":\"bug_fix|skill_candidate|preference|project_fact\",\"confidence\":\"low|medium|high\",\"signature\":\"short stable signature\",\"summary\":\"optional concise summary\",\"targetHints\":[\"memory\",\"skill\"],\"evidence\":\"optional compact evidence\"}]}",
 		"Only include verified bug fixes when a failure was followed by an edit/action and successful validation.",
 		"Drop one-off trivia, transient status, workflow artifacts, and loop artifacts.",
@@ -671,31 +674,90 @@ export function parseLearningExtractorResponse(raw: string): ReviewCandidateInpu
 	return candidates;
 }
 
-async function runSessionLearningExtractor(ctx: ExtensionContext): Promise<number> {
-	if (getMemoryLearningMode() === "off") return 0;
-	const branch = getSessionBranch(ctx);
-	if (!branch || !ctx.model) return 0;
+type DailyLearningState = {
+	daily?: Record<string, { hash: string; scannedAt: string; candidates: number }>;
+};
+
+function readLearningState(): DailyLearningState {
+	try {
+		const parsed = JSON.parse(fs.readFileSync(LEARNING_STATE_FILE, "utf-8"));
+		return parsed && typeof parsed === "object" ? parsed as DailyLearningState : {};
+	} catch {
+		return {};
+	}
+}
+
+function writeLearningState(state: DailyLearningState): void {
+	fs.writeFileSync(LEARNING_STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+}
+
+function contentHash(content: string): string {
+	return createHash("sha256").update(content).digest("hex");
+}
+
+async function extractLearningCandidates(
+	ctx: ExtensionContext,
+	text: string,
+	sourceLabel: string,
+	source: string,
+	date?: string,
+): Promise<ReviewCandidateInput[]> {
+	if (getMemoryLearningMode() === "off" || !ctx.model) return [];
 	const apiKey = await resolveExitSummaryApiKey(ctx);
-	if (!apiKey) return 0;
-	const conversation = serializeSessionConversation(branch);
-	if (!conversation.hasMessages || !conversation.text.trim()) return 0;
-	const truncated = truncateText(conversation.text.trim(), LEARNING_EXTRACTOR_MAX_CHARS, "end");
+	if (!apiKey) return [];
+	const trimmed = text.trim();
+	if (!trimmed) return [];
+	const truncated = truncateText(trimmed, LEARNING_EXTRACTOR_MAX_CHARS, "end");
 	const messages: Message[] = [{
 		role: "user",
-		content: [{ type: "text", text: buildLearningExtractorPrompt(truncated.text, truncated.truncated, conversation.text.trim().length) }],
+		content: [{ type: "text", text: buildLearningExtractorPrompt(truncated.text, truncated.truncated, trimmed.length, sourceLabel) }],
 		timestamp: Date.now(),
 	}];
+	const response = await complete(ctx.model, { systemPrompt: LEARNING_EXTRACTOR_SYSTEM_PROMPT, messages }, { apiKey, reasoningEffort: "low" });
+	const raw = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
+	return parseLearningExtractorResponse(raw).map((candidate) => ({ ...candidate, source, date }));
+}
+
+async function writeLearningCandidates(candidates: ReviewCandidateInput[]): Promise<number> {
+	let written = 0;
+	const store = new FileMemoryStore(MEMORY_DIR);
+	for (const candidate of candidates) {
+		const result = await upsertReviewCandidate(store, candidate);
+		if (result.changed) written += 1;
+	}
+	return written;
+}
+
+type DailyLearningScanResult = { scanned: boolean; changed: number; skipped?: string };
+
+async function runYesterdayDailyLearningScan(ctx: ExtensionContext): Promise<DailyLearningScanResult> {
+	if (getMemoryLearningMode() === "off") return { scanned: false, changed: 0, skipped: "learning off" };
+	const date = yesterdayStr();
+	const dailyContent = readFileSafe(dailyPath(date));
+	if (!dailyContent?.trim()) return { scanned: false, changed: 0, skipped: `daily/${date}.md empty or missing` };
+	const hash = contentHash(dailyContent);
+	const state = readLearningState();
+	const previous = state.daily?.[date];
+	if (previous?.hash === hash) return { scanned: false, changed: 0, skipped: `daily/${date}.md already scanned` };
 	try {
-		const response = await complete(ctx.model, { systemPrompt: LEARNING_EXTRACTOR_SYSTEM_PROMPT, messages }, { apiKey, reasoningEffort: "low" });
-		const raw = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
-		const candidates = parseLearningExtractorResponse(raw);
-		let written = 0;
-		const store = new FileMemoryStore(MEMORY_DIR);
-		for (const candidate of candidates) {
-			const result = await upsertReviewCandidate(store, candidate);
-			if (result.changed) written += 1;
-		}
-		return written;
+		const candidates = await extractLearningCandidates(ctx, dailyContent, `daily log for ${date}`, `daily/${date}`, date);
+		const changed = await writeLearningCandidates(candidates);
+		state.daily = { ...(state.daily || {}), [date]: { hash, scannedAt: new Date().toISOString(), candidates: candidates.length } };
+		writeLearningState(state);
+		return { scanned: true, changed };
+	} catch {
+		return { scanned: false, changed: 0, skipped: `daily/${date}.md scan failed` };
+	}
+}
+
+async function runSessionLearningExtractor(ctx: ExtensionContext): Promise<number> {
+	const branch = getSessionBranch(ctx);
+	if (!branch) return 0;
+	const conversation = serializeSessionConversation(branch);
+	if (!conversation.hasMessages || !conversation.text.trim()) return 0;
+	try {
+		const candidates = await extractLearningCandidates(ctx, conversation.text, "session transcript", "session_shutdown");
+		return writeLearningCandidates(candidates);
 	} catch {
 		return 0;
 	}
@@ -1439,7 +1501,7 @@ function getSnapshotMode(): "stable" | "per-turn" {
 }
 
 
-async function runCurator(reason: string): Promise<string> {
+async function runCurator(reason: string, ctx?: ExtensionContext): Promise<string> {
 	ensureDirs();
 	await evolutionBeforeChange(`curator before ${reason}`, "memory: snapshot before curate", "tool");
 	const store = new FileMemoryStore(MEMORY_DIR);
@@ -1448,6 +1510,7 @@ async function runCurator(reason: string): Promise<string> {
 		auditLog: new JsonlAuditLog(MEMORY_DIR),
 		reason,
 	});
+	const dailyLearningResult = ctx ? await runYesterdayDailyLearningScan(ctx) : { scanned: false, changed: 0 };
 	const lifecycleResult = await applyReviewLifecycle(store);
 	const memoryResult = await proposeMemoryPromotions(store);
 	const skillResult = getMemorySkillDraftsMode() === "off" ? { created: 0, proposals: [] } : await proposeSkillDrafts(store, { draftsDir: SKILL_DRAFTS_DIR });
@@ -1465,7 +1528,7 @@ async function runCurator(reason: string): Promise<string> {
 			autoApprovedSkills += 1;
 		}
 	}
-	const learningChanges = lifecycleResult.changed + memoryResult.created + skillResult.created + autoApprovedMemory + autoApprovedSkills;
+	const learningChanges = dailyLearningResult.changed + lifecycleResult.changed + memoryResult.created + skillResult.created + autoApprovedMemory + autoApprovedSkills;
 	if (result.patches.length > 0 || learningChanges > 0) {
 		snapshotDirty = true;
 		await ensureQmdAvailableForUpdate();
@@ -1473,6 +1536,7 @@ async function runCurator(reason: string): Promise<string> {
 	}
 	await evolutionAfterChange("memory: sync after curate");
 	const notes = [
+		dailyLearningResult.scanned ? `scanned yesterday daily, wrote ${dailyLearningResult.changed} review candidate change(s)` : dailyLearningResult.skipped ? `daily learning skipped: ${dailyLearningResult.skipped}` : "",
 		memoryResult.created > 0 ? `proposed ${memoryResult.created} memory promotion(s)` : "",
 		skillResult.created > 0 ? `proposed ${skillResult.created} skill draft(s)` : "",
 		autoApprovedMemory > 0 ? `auto-approved ${autoApprovedMemory} memory promotion(s)` : "",
@@ -2270,11 +2334,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "memory_curate",
 		label: "Memory Curate",
-		description: "Run the time-aware memory curator now. It deduplicates exact entries, updates event/quota lifecycle metadata, and appends stale temporary memories to REVIEW.md.",
+		description: "Run the time-aware memory curator now. It scans yesterday's daily log into REVIEW.md, deduplicates exact entries, updates event/quota lifecycle metadata, and appends stale temporary memories to REVIEW.md.",
 		parameters: Type.Object({}),
 		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
 			try {
-				const summary = await runCurator("memory_curate tool");
+				const summary = await runCurator("memory_curate tool", _ctx);
 				return { content: [{ type: "text", text: summary }], details: { summary } };
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);

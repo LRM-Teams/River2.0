@@ -15,7 +15,7 @@ pi install npm:pi-subagents
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.7.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.8.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
@@ -67,7 +67,7 @@ qmd collection add ~/.pi/agent/memory --name pi-memory
 qmd embed
 ```
 
-Memory versioning is enabled by default. It snapshots `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts` into `~/.pi/agent/evolution`, commits local changes automatically, and leaves push manual by default.
+Memory versioning is enabled by default. It snapshots `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts` into `~/.pi/agent/evolution`, commits local changes automatically, and leaves push manual by default. `memory_curate` also scans yesterday's daily log into `REVIEW.md` when learning is enabled and the daily file changed since the last scan.
 
 Useful commands:
 

@@ -196,7 +196,7 @@ Pi-memory mirrors the authoritative runtime directories into a local evolution r
 
 Authoritative runtime data remains `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts`; `~/.pi/agent/evolution` is a versioned mirror and backup repo.
 
-Automatic hooks snapshot before and sync/commit after `memory_write`, mutating `memory_edit`, mutating `scratchpad`, `memory_curate`, learning approve/reject, session summary/handoff writes, compaction handoffs, and external `jhp-pi-memory-curator run-once`. Read-only operations do not snapshot.
+Automatic hooks snapshot before and sync/commit after `memory_write`, mutating `memory_edit`, mutating `scratchpad`, `memory_curate`, learning approve/reject, session summary/handoff writes, compaction handoffs, and external `jhp-pi-memory-curator run-once`. `memory_curate` also scans yesterday's daily log into `REVIEW.md` when learning is enabled and that daily file changed since the last scan. Read-only operations do not snapshot.
 
 Tools and slash commands:
 
@@ -242,7 +242,7 @@ The controller uses a systemd user timer when available and falls back to cron. 
 | `PI_MEMORY_QMD_UPDATE` | `background`, `manual`, `off` | `background` | Control qmd update after writes |
 | `PI_MEMORY_NO_SEARCH` | `1` | unset | Disable per-turn search injection |
 | `PI_MEMORY_SUMMARIZE_TRANSITIONS` | `1`, `true`, `yes`, `on` | unset | Also summarize lifecycle transitions |
-| `PI_MEMORY_LEARNING` | `off`, `review`, `auto-review` | `review` | Control session learning candidate extraction |
+| `PI_MEMORY_LEARNING` | `off`, `review`, `auto-review` | `review` | Control session and curator daily learning candidate extraction |
 | `PI_MEMORY_LEARNING_MIN_CONFIDENCE` | `low`, `medium`, `high` | `medium` | Minimum extractor confidence to keep |
 | `PI_MEMORY_SKILL_DRAFTS` | `off`, `review` | `review` | Allow curator to propose disabled skill drafts |
 | `PI_MEMORY_AUTO_APPROVE_MEMORY` | `1`, `true`, `yes`, `on` | unset | YOLO mode for approving newly created memory proposals |

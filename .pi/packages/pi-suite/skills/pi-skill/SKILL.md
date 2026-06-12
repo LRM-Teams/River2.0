@@ -46,7 +46,7 @@ Memory tools:
 - `memory_edit`: read/add/replace/remove/replace_all/compact structured entries in `MEMORY.md`, `USER.md`, `STATE.md`, and `REVIEW.md`.
 - `scratchpad`: add/done/undo/clear/list checklist items.
 - `memory_search`: qmd-backed keyword, semantic, or deep search across memory files.
-- `memory_curate`: manually run curator lifecycle rules.
+- `memory_curate`: manually run curator lifecycle rules and scan yesterday's daily log into `REVIEW.md` when learning is enabled.
 - `memory_learning_approve`: approve a proposed memory promotion or disabled skill draft by exact id.
 - `memory_learning_reject`: reject or archive a review candidate/proposal without deleting it.
 - `memory_skill_drafts`: list proposed skill drafts.
@@ -74,6 +74,7 @@ Curator and learning behavior:
 - Quotas reset when `month` or `reset` rolls over.
 - Mutations are audited to `audit/curator.jsonl`.
 - Session shutdown may extract conservative learning candidates into `REVIEW.md`; they are not injected as normal memory and are not auto-enabled.
+- `memory_curate` scans yesterday's daily log once per content hash into review candidates, then curator lifecycle and proposal rules process those candidates.
 - Repeated candidates can become proposed memory promotions or proposed disabled skill drafts after `memory_curate`.
 - Approval is explicit by default: memory proposals write to memory stores; skill proposals write disabled drafts under `~/.pi/agent/skill-drafts/`.
 - The curator avoids semantic auto-delete/merge; ambiguous learning stays in review first.
