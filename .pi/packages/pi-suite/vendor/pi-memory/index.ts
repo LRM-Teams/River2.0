@@ -1461,6 +1461,31 @@ async function runCurator(reason: string): Promise<string> {
 	return notes.length > 0 ? `${result.summary}; ${notes.join("; ")}` : result.summary;
 }
 
+function startupCuratorHintEnabled(): boolean {
+	const value = process.env.PI_MEMORY_CURATOR_STARTUP_HINT?.trim().toLowerCase();
+	return !value || !["0", "false", "off", "no"].includes(value);
+}
+
+function notifyDisabledCuratorService(ctx: ExtensionContext): void {
+	if (!ctx.hasUI || !startupCuratorHintEnabled()) return;
+	try {
+		const result = getCuratorServiceStatus({ memoryDir: MEMORY_DIR, cliPath: new URL("./src/cli.ts", import.meta.url).pathname });
+		if (result.state.enabled) return;
+		ctx.ui.notify(
+			[
+				"Memory self-evolution curator is off.",
+				"It can run daily outside pi to maintain memory lifecycle, review repeated learnings, and propose disabled skill drafts.",
+				"Enable: /memory-curator-enable 03:00",
+				"Status: /memory-curator-status",
+				"Disable: /memory-curator-disable",
+			].join("\n"),
+			"info",
+		);
+	} catch {
+		// Startup hints should never block memory initialization.
+	}
+}
+
 /** Reset snapshot state (for testing). */
 export function _resetMemorySnapshot() {
 	memorySnapshot = null;
@@ -1492,6 +1517,7 @@ export default function (pi: ExtensionAPI) {
 				return undefined;
 			});
 		}
+		notifyDisabledCuratorService(ctx);
 
 		qmdAvailable = await detectQmd();
 		if (!qmdAvailable) {
