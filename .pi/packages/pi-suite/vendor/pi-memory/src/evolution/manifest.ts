@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { EvolutionConfig } from "./config.ts";
-import { countFiles } from "./file-utils.ts";
+import { countFiles, pathExists } from "./file-utils.ts";
 
 export interface EvolutionManifest {
 	id: string;
@@ -57,12 +57,27 @@ export function readManifest(config: EvolutionConfig, id: string): EvolutionMani
 }
 
 export function listManifests(config: EvolutionConfig, limit = 20): EvolutionManifest[] {
+	return readAllManifests(config).slice(0, limit);
+}
+
+export function pruneOldSnapshots(config: EvolutionConfig): EvolutionManifest[] {
+	const manifests = readAllManifests(config);
+	if (manifests.length <= config.maxSnapshots) return [];
+
+	const removed = manifests.slice(config.maxSnapshots);
+	for (const manifest of removed) {
+		fs.rmSync(path.join(config.repoDir, "snapshots", manifest.id), { recursive: true, force: true });
+		fs.rmSync(path.join(config.repoDir, "manifests", `${manifest.id}.json`), { force: true });
+	}
+	return removed;
+}
+
+function readAllManifests(config: EvolutionConfig): EvolutionManifest[] {
 	const dir = path.join(config.repoDir, "manifests");
 	if (!fs.existsSync(dir)) return [];
 	return fs.readdirSync(dir)
 		.filter((file) => file.endsWith(".json"))
-		.sort()
-		.reverse()
-		.slice(0, limit)
-		.map((file) => JSON.parse(fs.readFileSync(path.join(dir, file), "utf-8")) as EvolutionManifest);
+		.map((file) => JSON.parse(fs.readFileSync(path.join(dir, file), "utf-8")) as EvolutionManifest)
+		.filter((manifest) => pathExists(path.join(config.repoDir, "snapshots", manifest.id)))
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
 }

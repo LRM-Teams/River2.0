@@ -1573,6 +1573,7 @@ function formatEvolutionStatusText(status: ReturnType<typeof getEvolutionGitStat
 		`dirty: ${status.dirty}`,
 		`autoCommit: ${status.autoCommit}`,
 		`autoPush: ${status.autoPush}`,
+		`snapshotLimit: ${status.maxSnapshots}`,
 		`lastCommit: ${status.lastCommit || "n/a"}`,
 		status.status ? `status:\n${status.status}` : "status: clean",
 	].join("\n");

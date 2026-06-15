@@ -196,7 +196,7 @@ Pi-memory mirrors the authoritative runtime directories into a local evolution r
 
 Authoritative runtime data remains `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts`; `~/.pi/agent/evolution` is a versioned mirror and backup repo.
 
-Automatic hooks snapshot before and sync/commit after `memory_write`, mutating `memory_edit`, mutating `scratchpad`, `memory_curate`, learning approve/reject, session summary/handoff writes, compaction handoffs, and external `jhp-pi-memory-curator run-once`. `memory_curate` also scans yesterday's daily log into `REVIEW.md` when learning is enabled and that daily file changed since the last scan. Read-only operations do not snapshot.
+Automatic hooks snapshot before and sync/commit after `memory_write`, mutating `memory_edit`, mutating `scratchpad`, `memory_curate`, learning approve/reject, session summary/handoff writes, compaction handoffs, and external `jhp-pi-memory-curator run-once`. `memory_curate` also scans yesterday's daily log into `REVIEW.md` when learning is enabled and that daily file changed since the last scan. Read-only operations do not snapshot. Snapshots use a sliding window and keep the latest 100 snapshots by default; creating snapshot 101 deletes the oldest snapshot directory and manifest.
 
 Tools and slash commands:
 
@@ -253,6 +253,7 @@ The controller uses a systemd user timer when available and falls back to cron. 
 | `PI_EVOLUTION_BRANCH` | branch | `main` | Local branch used for init/clone |
 | `PI_EVOLUTION_AUTO_COMMIT` | `0`, `1`, `true`, `false` | `1` | Commit sync/snapshot changes automatically |
 | `PI_EVOLUTION_AUTO_PUSH` | `0`, `1`, `true`, `false` | `0` | Push after commits automatically |
+| `PI_EVOLUTION_MAX_SNAPSHOTS` | positive integer | `100` | Maximum snapshots to keep in the local sliding window |
 
 ## Development
 

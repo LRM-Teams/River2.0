@@ -14,6 +14,7 @@ export interface GitStatus {
 	lastCommit: string | null;
 	autoPush: boolean;
 	autoCommit: boolean;
+	maxSnapshots: number;
 	enabled: boolean;
 }
 
@@ -104,6 +105,7 @@ export function getEvolutionGitStatus(config: EvolutionConfig): GitStatus {
 			lastCommit: null,
 			autoPush: config.autoPush,
 			autoCommit: config.autoCommit,
+			maxSnapshots: config.maxSnapshots,
 			enabled: config.enabled,
 		};
 	}
@@ -118,6 +120,7 @@ export function getEvolutionGitStatus(config: EvolutionConfig): GitStatus {
 		lastCommit: runGit(config.repoDir, ["log", "-1", "--oneline"], { allowFailure: true }) || null,
 		autoPush: config.autoPush,
 		autoCommit: config.autoCommit,
+		maxSnapshots: config.maxSnapshots,
 		enabled: config.enabled,
 	};
 }

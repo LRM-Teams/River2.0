@@ -2,7 +2,7 @@ import * as path from "node:path";
 import type { EvolutionConfig } from "./config.ts";
 import { copyDirContents, emptyDir } from "./file-utils.ts";
 import { commitEvolutionChanges, ensureEvolutionRepo, type GitCommitResult } from "./git.ts";
-import { buildManifest, createSnapshotId, writeManifest, type EvolutionManifest } from "./manifest.ts";
+import { buildManifest, createSnapshotId, pruneOldSnapshots, writeManifest, type EvolutionManifest } from "./manifest.ts";
 import { syncCurrentToEvolution } from "./sync.ts";
 
 export interface SnapshotOptions {
@@ -29,6 +29,7 @@ export function createEvolutionSnapshot(config: EvolutionConfig, options: Snapsh
 	copyDirContents(config.skillDraftsDir, path.join(snapshotDir, "skill-drafts"));
 	const manifest = buildManifest(config, id, options.reason, options.trigger || "manual", options.sessionId);
 	writeManifest(config, manifest);
+	pruneOldSnapshots(config);
 	syncCurrentToEvolution(config);
 	const commit = commitEvolutionChanges(config, options.commitMessage || `memory: snapshot ${id}`);
 	return { manifest, commit };

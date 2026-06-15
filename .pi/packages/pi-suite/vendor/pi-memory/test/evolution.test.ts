@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -49,6 +49,24 @@ test("creates snapshot, manifest, current mirrors, and git commit", () => {
 	assert.equal(existsSync(join(repoDir, "manifests", `${result.manifest.id}.json`)), true);
 	assert.equal(listManifests(config, 1)[0].reason, "test snapshot");
 	assert.match(getEvolutionGitStatus(config).lastCommit || "", /memory: test snapshot/);
+});
+
+test("prunes old snapshots beyond the configured window", () => {
+	const { memoryDir, repoDir, config } = testConfig();
+	config.maxSnapshots = 3;
+	mkdirSync(memoryDir, { recursive: true });
+
+	const ids: string[] = [];
+	for (let i = 0; i < 4; i += 1) {
+		writeFileSync(join(memoryDir, "MEMORY.md"), `version ${i}\n`, "utf-8");
+		const result = createEvolutionSnapshot(config, { reason: `snapshot ${i}`, trigger: "test", commitMessage: `memory: snapshot ${i}` });
+		ids.push(result.manifest?.id || "");
+	}
+
+	assert.equal(existsSync(join(repoDir, "snapshots", ids[0])), false);
+	assert.equal(existsSync(join(repoDir, "manifests", `${ids[0]}.json`)), false);
+	assert.equal(readdirSync(join(repoDir, "snapshots")).length, 3);
+	assert.deepEqual(listManifests(config, 10).map((manifest) => manifest.id), ids.slice(1).reverse());
 });
 
 test("local-only config removes the legacy shared team remote", () => {

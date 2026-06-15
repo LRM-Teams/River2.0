@@ -85,6 +85,7 @@ Memory versioning:
 - Versioning mirror and snapshots live at `~/.pi/agent/evolution` by default.
 - No remote is configured by default; memory evolution stays local per user/machine unless the user adds a personal private remote.
 - Automatic local snapshot + commit is enabled by default; automatic push is disabled unless `PI_EVOLUTION_AUTO_PUSH=1`.
+- Snapshots use a sliding window: keep the latest 100 by default, and delete the oldest snapshot directory and manifest when a new snapshot exceeds the limit.
 - Snapshots run before mutating memory tools, curator runs, learning approve/reject, session summaries/handoffs, compact handoffs, restore, and external curator `run-once`.
 - Slash commands: `/memory-version-status`, `/memory-version-snapshot [reason]`, `/memory-version-list`, `/memory-version-restore <snapshot-id> [memory|skill-drafts|all]`, `/memory-version-push`.
 - Restore always writes a pre-restore snapshot first, then restores selected files and commits the restored state.
@@ -126,6 +127,7 @@ Useful memory environment variables:
 - `PI_EVOLUTION_BRANCH`: override branch; default `main`.
 - `PI_EVOLUTION_AUTO_COMMIT=0`: disable automatic local commits.
 - `PI_EVOLUTION_AUTO_PUSH=1`: push automatically after commits.
+- `PI_EVOLUTION_MAX_SNAPSHOTS`: maximum local snapshots to keep; default `100`.
 
 ## Web And Research
 
