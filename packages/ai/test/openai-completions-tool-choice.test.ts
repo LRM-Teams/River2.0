@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel, getModels } from "../src/models.ts";
 import { convertMessages } from "../src/providers/openai-completions.ts";
 import { stream, streamSimple } from "../src/stream.ts";
 import type { AssistantMessage, Model, Tool, ToolResultMessage } from "../src/types.ts";
@@ -890,8 +890,10 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
-		for (const modelId of ["moonshotai/kimi-k2.6", "moonshotai/kimi-k2.6:free"] as const) {
-			const model = getModel("openrouter", modelId)!;
+		const models = getModels("openrouter").filter((model) => model.id.startsWith("moonshotai/kimi-k2.6"));
+
+		expect(models.map((model) => model.id)).toContain("moonshotai/kimi-k2.6");
+		for (const model of models) {
 			expect(model.compat?.supportsDeveloperRole).toBe(false);
 			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 		}
