@@ -21,7 +21,7 @@ curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.8.tgz | t
 ## What Is Included
 
 - Local extensions: goal mode, pet, prompt URL widget, TUI redraw stats, snake, TPS notifications.
-- Prompts: changelog audit, issue analysis, PR review, wrap workflow.
+- Prompts: changelog audit, issue analysis, PR review, review workflow, commit workflow, wrap workflow.
 - Skills: provider checklist, weather, LeetCode array practice, Pi capability reference, image-to-editable-PPT workflow.
 - Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, and memory/skill-draft versioning.
 
@@ -80,6 +80,14 @@ Useful commands:
 ```
 
 Memory evolution is local-only by default and does not configure a shared remote. If a user wants backup sync, set `PI_EVOLUTION_REMOTE` to their own private repo before bootstrap/setup, or add a personal remote later with `git -C ~/.pi/agent/evolution remote add origin <url>`. Set `PI_EVOLUTION_AUTO_PUSH=1` only if automatic remote sync is desired.
+
+## Review And Commit Workflows
+
+Use `/review [target] [--fix] [--comment] [--summary]` to inspect current diffs, branch ranges, or PRs with findings first and a verdict last. It is local-only by default: GitHub comments are drafted first and posted only after explicit confirmation.
+
+Use `/commit [message|split|pr|apply]` to inspect current changes, warn about mixed concerns, draft commit messages, suggest split points, or draft PR text. It does not stage, commit, or push unless you explicitly confirm the exact action.
+
+These workflows are prompt-template workflows only. They do not merge read behavior, add tool discovery, rewrite memory/skills, or run as hidden background processes.
 
 ## Goal Mode
 
