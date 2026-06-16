@@ -7,9 +7,6 @@ JHP's Pi extension suite for team coding workflows.
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 pi install npm:@lebronj/pi-suite
-pi install npm:pi-web-access
-pi install npm:pi-mcp-adapter
-pi install npm:pi-subagents
 ```
 
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
@@ -20,17 +17,25 @@ curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.8.tgz | t
 
 ## What Is Included
 
-- Local extensions: goal mode, pet, prompt URL widget, TUI redraw stats, snake, TPS notifications.
+- Local extensions: autogoal, goal mode, pet, prompt URL widget, TUI redraw stats, snake, TPS notifications.
 - Prompts: changelog audit, issue analysis, PR review, review workflow, commit workflow, wrap workflow.
 - Skills: provider checklist, weather, LeetCode array practice, Pi capability reference, image-to-editable-PPT workflow.
 - Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, and memory/skill-draft versioning.
 
-Install optional packages separately if needed:
+`pi-mcp-adapter`, `pi-subagents`, and `pi-web-access` are loaded by this suite. Do not install them separately unless you filter suite resources, because duplicate extension tools/flags can conflict.
+
+Figma is not installed or loaded by default. Enable it only when needed:
 
 ```bash
-pi install npm:pi-web-access
-pi install npm:pi-mcp-adapter
-pi install npm:pi-subagents
+pi install npm:pi-mono-figma
+# then run /reload or restart pi
+```
+
+Disable Figma later with:
+
+```bash
+pi remove npm:pi-mono-figma
+# then run /reload or restart pi
 ```
 
 Debug-only extensions are intentionally excluded:
@@ -38,6 +43,30 @@ Debug-only extensions are intentionally excluded:
 - `dump-system-prompt.ts`
 - `zz-full-session-log.ts`
 - `agentmemory`
+
+## Autogoal
+
+`/autogoal <task>` starts a bounded autonomous coding run. It persists the objective, auto-continues with loop budgets, checkpoints at high context usage, and can continue in a fresh session when the context window gets tight.
+
+Useful commands:
+
+```bash
+/autogoal <task>
+/autogoal status
+/autogoal pause
+/autogoal resume
+/autogoal checkpoint optional reason
+/autogoal drop
+```
+
+Behavior:
+
+- 60% context: prepare and stay concise.
+- 75% context: write a structured checkpoint soon.
+- 85% context: checkpoint and switch to a new session.
+- Completion requires current-state evidence: changed files read after edits and a passing validation command.
+- Subagents are optional and budgeted; worker subagents must use worktree isolation.
+- Run artifacts are written under `~/.pi/agent/workflow-runs/autogoal-<run-id>/`.
 
 ## Team Model Setup
 

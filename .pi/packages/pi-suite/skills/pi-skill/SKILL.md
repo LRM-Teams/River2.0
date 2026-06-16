@@ -18,6 +18,7 @@ When adding, removing, renaming, or materially changing any pi capability in thi
 - `edit`: precise exact-text replacements in one file.
 - `write`: create or overwrite files.
 - `goal`: inspect, resume/drop, or complete an active goal-mode objective when goal mode is running.
+- `autogoal`: inspect, checkpoint, pause/resume/drop, block, or complete an active bounded autogoal run when `/autogoal` is running.
 - `lsp_diagnostics` / `lsp_navigation`: code-intelligence path for diagnostics, definitions, references, hover, symbols, call hierarchy, rename, and workspace diagnostics when pi-lens/LSP tools are installed.
 - `ast_grep_search` / `ast_grep_replace` / `ast_dump`: AST-aware code search and replacement when pi-lens tools are installed; prefer over raw text search for structural code patterns.
 - `lens_diagnostics`: inspect pi-lens warnings/errors for files touched this session when available.
@@ -170,6 +171,19 @@ mcp({ tool: "tool_name", args: "{}" })
 
 Do not route built-in pi tools through MCP; call them directly.
 
+## Autogoal
+
+Autogoal is provided by `autogoal.ts`.
+
+- Start with `/autogoal <task>`.
+- It persists the objective, injects hidden loop context, enables the `autogoal` tool, and auto-continues until verified complete, paused, dropped, blocked, or interrupted.
+- It uses bounded loop defaults: 12 autonomous turns per session, 2 no-progress turns, 3 repeated repair attempts, and 4 subagent jobs per run.
+- Context thresholds are 60% prepare, 75% checkpoint, and 85% checkpoint plus automatic new-session continuation.
+- Completion is gated by current-state evidence: changed files must be read after edits and a relevant validation command must pass before `autogoal({ op: "complete" })` succeeds.
+- Subagents are optional; scout/reviewer/verifier are allowed when useful, while worker subagents must use isolated worktrees.
+- Run artifacts are audit-only and live under `~/.pi/agent/workflow-runs/autogoal-<run-id>/`; checkpoints also live under `~/.pi/agent/autogoal/checkpoints/`.
+- Useful commands: `/autogoal status`, `/autogoal pause`, `/autogoal resume`, `/autogoal checkpoint`, `/autogoal drop`, `/autogoal auto on`, `/autogoal auto off`.
+
 ## Goal Mode
 
 Goal mode is provided by `goal-mode.ts`.
@@ -209,6 +223,7 @@ Suite skills currently include:
 
 Optional package-provided skills can include:
 
+- `figma`: Figma REST/API design exploration and design-to-code workflows from `pi-mono-figma`; not installed or loaded by default, enabled with `pi install npm:pi-mono-figma`.
 - `librarian`: library internals research with source citations.
 - `pi-subagents`: subagent delegation workflows.
 - `ast-grep`: AST-aware code search/replace guidance.
@@ -231,11 +246,12 @@ Global user package configuration is in `~/.pi/agent/settings.json`; project pac
 
 Current suite package:
 
-- `@lebronj/pi-suite`: bundles local extensions, prompts, suite skills, vendored `@jhp/pi-memory`, and optional package hooks for `pi-mcp-adapter`, `pi-subagents`, and `pi-web-access`.
+- `@lebronj/pi-suite`: bundles local extensions, prompts, suite skills, vendored `@jhp/pi-memory`, and optional package hooks for `pi-mcp-adapter`, `pi-subagents`, and `pi-web-access`. It does not install or load `pi-mono-figma` by default.
 
 Common project packages:
 
 - `@jhp/pi-memory`
+- `pi-mono-figma` (install and enable only on demand with `pi install npm:pi-mono-figma`)
 - `pi-web-access`
 - `pi-mcp-adapter`
 - `pi-subagents`
@@ -246,7 +262,8 @@ Bootstrap behavior:
 - Installs global `@earendil-works/pi-coding-agent`.
 - Writes the team OpenAI-compatible provider to `~/.pi/agent/models.json`.
 - Sets default provider/model in `~/.pi/agent/settings.json`.
-- Runs `pi install npm:@lebronj/pi-suite` by default.
+- Runs `pi install npm:@lebronj/pi-suite` by default; this does not install or load `pi-mono-figma`.
+- Prints follow-up instructions for enabling Figma later with `pi install npm:pi-mono-figma` and disabling it with `pi remove npm:pi-mono-figma`.
 - Creates `~/.pi/agent/memory` and links it into the workspace `.pi/memory` when safe.
 - Optionally initializes the local `~/.pi/agent/evolution` repo for memory/skill-draft snapshots; it never writes tokens or enables auto-push.
 - Links suite skills into the workspace `.pi/skills` when safe.

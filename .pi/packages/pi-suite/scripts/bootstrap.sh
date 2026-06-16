@@ -218,4 +218,8 @@ Provider: openai
 Base URL: $TEAM_BASE_URL
 Model: $TEAM_MODEL
 Run: pi
+
+Optional Figma tools are not installed by default.
+Enable later with: pi install npm:pi-mono-figma
+Disable later with: pi remove npm:pi-mono-figma
 MSG
