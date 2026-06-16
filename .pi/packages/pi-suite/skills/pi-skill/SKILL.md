@@ -206,7 +206,6 @@ The pet extension provides a small terminal companion and durable profile.
 ## UI And Utility Extensions
 
 - `prompt-url-widget.ts`: detects PR/issue prompt templates, fetches GitHub metadata with `gh`, shows a widget, and names the session when possible.
-- `redraws.ts`: `/tui` shows TUI full redraw stats.
 - `snake.ts`: `/snake` opens a TUI snake game; `Esc` pauses/saves, `q` quits, arrows/WASD move.
 - `tps.ts`: after each assistant run, shows tokens-per-second and token usage details.
 - `memory-curator.ts`: deprecated compatibility notice only; external curation is managed by pi-memory service tools.
@@ -217,8 +216,6 @@ Suite skills currently include:
 
 - `add-llm-provider`: checklist for adding providers to `packages/ai`.
 - `image-to-editable-ppt-slide`: rebuild reference images as editable PowerPoint slides.
-- `leetcode-array`: array problem patterns and Python references.
-- `weather`: current weather and forecasts using no-key services.
 - `pi-skill`: this capability index.
 
 Optional package-provided skills can include:

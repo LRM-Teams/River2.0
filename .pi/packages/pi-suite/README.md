@@ -12,14 +12,14 @@ pi install npm:@lebronj/pi-suite
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.8.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.12.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
 
-- Local extensions: autogoal, goal mode, pet, prompt URL widget, TUI redraw stats, snake, TPS notifications.
+- Local extensions: autogoal, goal mode, pet, prompt URL widget, snake, TPS notifications.
 - Prompts: changelog audit, issue analysis, PR review, review workflow, commit workflow, wrap workflow.
-- Skills: provider checklist, weather, LeetCode array practice, Pi capability reference, image-to-editable-PPT workflow.
+- Skills: provider checklist, Pi capability reference, image-to-editable-PPT workflow.
 - Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, and memory/skill-draft versioning.
 
 `pi-mcp-adapter`, `pi-subagents`, and `pi-web-access` are loaded by this suite. Do not install them separately unless you filter suite resources, because duplicate extension tools/flags can conflict.
