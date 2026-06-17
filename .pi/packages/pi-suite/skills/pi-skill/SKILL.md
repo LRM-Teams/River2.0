@@ -95,6 +95,7 @@ External curator service:
 
 - This is the main self-evolution maintenance loop: it can run daily outside the pi process, even when pi is closed.
 - It uses a systemd user timer when available, with cron fallback.
+- For vendored TypeScript CLI paths under `node_modules`, the service launcher uses Bun or tsx instead of plain Node so Node 22 does not fail on TypeScript type stripping.
 - On `session_start` and after `/reload`, pi-memory checks service status. If the service is disabled and UI is available, it shows a startup hint with enable/status/disable commands.
 - Enable with `/memory-curator-enable 03:00` or ask the agent to call `memory_curator_enable`.
 - Inspect with `/memory-curator-status` or `memory_curator_status`.
@@ -208,6 +209,7 @@ The pet extension provides a small terminal companion and durable profile.
 - `prompt-url-widget.ts`: detects PR/issue prompt templates, fetches GitHub metadata with `gh`, shows a widget, and names the session when possible.
 - `snake.ts`: `/snake` opens a TUI snake game; `Esc` pauses/saves, `q` quits, arrows/WASD move.
 - `tps.ts`: after each assistant run, shows tokens-per-second and token usage details.
+- `pi-suite-repair.ts`: registers `/pi-suite-repair` and startup reminders for missing companion Pi packages declared by the suite.
 - `memory-curator.ts`: deprecated compatibility notice only; external curation is managed by pi-memory service tools.
 
 ## Skills
@@ -243,7 +245,7 @@ Global user package configuration is in `~/.pi/agent/settings.json`; project pac
 
 Current suite package:
 
-- `@lebronj/pi-suite`: bundles local extensions, prompts, suite skills, vendored `@jhp/pi-memory`, and optional package hooks for `pi-mcp-adapter`, `pi-subagents`, and `pi-web-access`. It does not install or load `pi-mono-figma` by default.
+- `@lebronj/pi-suite`: bundles local extensions, prompts, suite skills, and vendored `@jhp/pi-memory`. The bootstrap script installs `pi-mcp-adapter`, `pi-subagents`, and `pi-web-access` as standalone companion Pi packages. It does not install or load `pi-mono-figma` by default.
 
 Common project packages:
 
@@ -259,7 +261,7 @@ Bootstrap behavior:
 - Installs global `@earendil-works/pi-coding-agent`.
 - Writes the team OpenAI-compatible provider to `~/.pi/agent/models.json`.
 - Sets default provider/model in `~/.pi/agent/settings.json`.
-- Runs `pi install npm:@lebronj/pi-suite` by default; this does not install or load `pi-mono-figma`.
+- Runs `pi install npm:@lebronj/pi-suite` by default, then installs companion packages with `pi install npm:pi-mcp-adapter`, `pi install npm:pi-subagents`, and `pi install npm:pi-web-access`; this does not install or load `pi-mono-figma`.
 - Prints follow-up instructions for enabling Figma later with `pi install npm:pi-mono-figma` and disabling it with `pi remove npm:pi-mono-figma`.
 - Creates `~/.pi/agent/memory` and links it into the workspace `.pi/memory` when safe.
 - Optionally initializes the local `~/.pi/agent/evolution` repo for memory/skill-draft snapshots; it never writes tokens or enables auto-push.

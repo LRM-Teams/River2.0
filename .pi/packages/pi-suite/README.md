@@ -7,12 +7,15 @@ JHP's Pi extension suite for team coding workflows.
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 pi install npm:@lebronj/pi-suite
+pi install npm:pi-mcp-adapter
+pi install npm:pi-subagents
+pi install npm:pi-web-access
 ```
 
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.12.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.14.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
@@ -22,7 +25,11 @@ curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.12.tgz | 
 - Skills: provider checklist, Pi capability reference, image-to-editable-PPT workflow.
 - Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, and memory/skill-draft versioning.
 
-`pi-mcp-adapter`, `pi-subagents`, and `pi-web-access` are loaded by this suite. Do not install them separately unless you filter suite resources, because duplicate extension tools/flags can conflict.
+Install the companion packages above with the suite so MCP, subagent, and web tools register from their own package manifests. The bootstrap script installs the same companion packages automatically.
+
+Do not add those companion packages inside the `@lebronj/pi-suite` manifest at the same time; loading them both from the suite manifest and as standalone Pi packages creates duplicate tool/flag registration conflicts.
+
+Existing users can run `pi update --extensions`; if Pi reports missing suite companion packages on startup, run `/pi-suite-repair` and it will install or refresh the currently required companion package set, then reload resources.
 
 Figma is not installed or loaded by default. Enable it only when needed:
 
@@ -97,6 +104,8 @@ qmd embed
 ```
 
 Memory versioning is enabled by default. It snapshots `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts` into `~/.pi/agent/evolution`, commits local changes automatically, and leaves push manual by default. `memory_curate` also scans yesterday's daily log into `REVIEW.md` when learning is enabled and the daily file changed since the last scan.
+
+The external memory curator service uses a systemd user timer when available, with cron fallback. When the service points at a vendored TypeScript CLI under `node_modules`, the launcher uses Bun or tsx instead of plain Node so Node 22 can run it reliably.
 
 Useful commands:
 

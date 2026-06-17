@@ -1,6 +1,6 @@
 {
   "name": "@lebronj/pi-suite",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "JHP's Pi extension suite for team coding workflows",
   "type": "module",
   "keywords": [
@@ -22,11 +22,6 @@
     "README.md",
     "LICENSE"
   ],
-  "dependencies": {
-    "pi-mcp-adapter": "2.9.0",
-    "pi-subagents": "0.28.0",
-    "pi-web-access": "0.10.7"
-  },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
@@ -54,19 +49,13 @@
   "pi": {
     "extensions": [
       "./extensions",
-      "./vendor/pi-memory/index.ts",
-      "node_modules/pi-mcp-adapter/index.ts",
-      "node_modules/pi-subagents/src/extension/index.ts",
-      "node_modules/pi-web-access/index.ts"
+      "./vendor/pi-memory/index.ts"
     ],
     "prompts": [
-      "./prompts",
-      "node_modules/pi-subagents/prompts"
+      "./prompts"
     ],
     "skills": [
-      "./skills",
-      "node_modules/pi-subagents/skills",
-      "node_modules/pi-web-access/skills"
+      "./skills"
     ]
   },
   "publishConfig": {

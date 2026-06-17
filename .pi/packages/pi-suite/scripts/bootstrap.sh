@@ -83,6 +83,17 @@ NODE
 echo "Installing Pi extension suite: $PI_SUITE"
 pi install "$PI_SUITE"
 
+COMPANION_PACKAGES=(
+  "npm:pi-mcp-adapter"
+  "npm:pi-subagents"
+  "npm:pi-web-access"
+)
+
+echo "Installing Pi companion packages..."
+for companion_package in "${COMPANION_PACKAGES[@]}"; do
+  pi install "$companion_package"
+done
+
 link_if_safe() {
   local source_path="$1"
   local link_path="$2"
