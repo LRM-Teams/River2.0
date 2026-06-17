@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 interface PackageEntryObject {
@@ -77,10 +77,38 @@ function requirementSatisfied(requirement: RepairRequirement, installedSources: 
 	return installedSources.some((source) => sourceIdentity(source) === requiredIdentity);
 }
 
+function globalSettingsPath(): string {
+	return join(getAgentDir(), "settings.json");
+}
+
 function readInstalledPackageSources(ctx: ExtensionContext): string[] {
-	const globalSettings = readSettings(join(getAgentDir(), "settings.json"));
+	const globalSettings = readSettings(globalSettingsPath());
 	const projectSettings = readSettings(join(ctx.cwd, ".pi", "settings.json"));
 	return [...packageSourcesFromSettings(globalSettings), ...packageSourcesFromSettings(projectSettings)];
+}
+
+function addGlobalPackageSources(sources: string[]): string[] {
+	const settingsPath = globalSettingsPath();
+	const settings = readSettings(settingsPath) ?? {};
+	const packages = Array.isArray(settings.packages) ? [...settings.packages] : [];
+	const existingSources = packageSourcesFromSettings({ packages });
+	const added: string[] = [];
+
+	for (const source of sources) {
+		const requiredIdentity = sourceIdentity(source);
+		const alreadyPresent = existingSources.some((existing) => sourceIdentity(existing) === requiredIdentity);
+		if (alreadyPresent) continue;
+		packages.push(source);
+		existingSources.push(source);
+		added.push(source);
+	}
+
+	if (added.length > 0) {
+		mkdirSync(dirname(settingsPath), { recursive: true });
+		writeFileSync(settingsPath, `${JSON.stringify({ ...settings, packages }, null, 2)}\n`, "utf8");
+	}
+
+	return added;
 }
 
 function pendingRequirements(ctx: ExtensionContext): RepairRequirement[] {
@@ -111,7 +139,7 @@ export default function piSuiteRepairExtension(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) return;
 
-			const pending = pendingRequirements(ctx);
+			let pending = pendingRequirements(ctx);
 			if (pending.length === 0) {
 				ctx.ui.notify("pi-suite companion packages are already registered. No repair needed.", "info");
 				return;
@@ -122,21 +150,42 @@ export default function piSuiteRepairExtension(pi: ExtensionAPI): void {
 				"info",
 			);
 
-			const failures: string[] = [];
+			const installFailures: string[] = [];
 			for (const requirement of pending) {
 				const result = await pi.exec("pi", ["install", requirement.source], { signal: ctx.signal, timeout: 120_000 });
 				if (result.code !== 0) {
 					const details = (result.stderr || result.stdout || "unknown error").trim();
-					failures.push(`${formatRequirement(requirement)}: ${details}`);
+					installFailures.push(`${formatRequirement(requirement)}: ${details}`);
 				}
 			}
 
-			if (failures.length > 0) {
-				ctx.ui.notify(`pi-suite repair failed: ${failures.join("; ")}`, "error");
+			pending = pendingRequirements(ctx);
+			if (pending.length > 0) {
+				const added = addGlobalPackageSources(pending.map((item) => item.source));
+				if (added.length > 0) {
+					ctx.ui.notify(`Registered missing companion packages in user settings: ${added.join(", ")}`, "info");
+				}
+				const updateResult = await pi.exec("pi", ["update", "--extensions"], { signal: ctx.signal, timeout: 180_000 });
+				if (updateResult.code !== 0) {
+					const details = (updateResult.stderr || updateResult.stdout || "unknown error").trim();
+					installFailures.push(`pi update --extensions: ${details}`);
+				}
+			}
+
+			pending = pendingRequirements(ctx);
+			if (pending.length > 0) {
+				const manualCommands = pending.map((item) => `pi install ${item.source}`).join("; ");
+				ctx.ui.notify(
+					`pi-suite repair still sees missing packages: ${pending.map((item) => item.source).join(", ")}. Run manually: ${manualCommands}`,
+					"error",
+				);
 				return;
 			}
 
-			ctx.ui.notify("pi-suite companion packages are installed. Reloading Pi resources...", "info");
+			if (installFailures.length > 0) {
+				ctx.ui.notify(`pi-suite repair recovered after install issues: ${installFailures.join("; ")}`, "warning");
+			}
+			ctx.ui.notify("pi-suite companion packages are registered. Reloading Pi resources...", "info");
 			await ctx.reload();
 		},
 	});
