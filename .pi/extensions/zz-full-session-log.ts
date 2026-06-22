@@ -1,10 +1,10 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-const LOG_ROOT = "/workspaces/gaia/pi-mono/.pi/agent/full_session";
+const LOG_ROOT_ENV = "PI_FULL_SESSION_LOG_ROOT";
 
 function safeJson(value: unknown): JsonValue {
 	const seen = new WeakSet<object>();
@@ -30,9 +30,12 @@ function stamp(): string {
 }
 
 function sessionDir(ctx: ExtensionContext): string {
+	const logRoot = process.env[LOG_ROOT_ENV]
+		? resolve(ctx.cwd, process.env[LOG_ROOT_ENV])
+		: join(ctx.cwd, ".pi", "agent", "full_session");
 	const sessionFile = ctx.sessionManager.getSessionFile();
 	const sessionBase = sessionFile ? basename(sessionFile, ".jsonl") : ctx.sessionManager.getSessionId();
-	return join(LOG_ROOT, sessionBase);
+	return join(logRoot, sessionBase);
 }
 
 function writeEvent(ctx: ExtensionContext, eventName: string, data: unknown): void {

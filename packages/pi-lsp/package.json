@@ -1,0 +1,44 @@
+{
+	"name": "@lebronj/pi-lsp",
+	"version": "0.0.3",
+	"description": "Optional LSP code-intelligence package for pi",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": ["dist", "skills", "README.md"],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json && shx cp README.md dist/"
+	},
+	"dependencies": {
+		"cross-spawn": "7.0.6",
+		"glob": "13.0.6",
+		"yaml": "2.9.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	},
+	"devDependencies": {
+		"@types/cross-spawn": "6.0.6",
+		"@types/node": "24.12.4",
+		"shx": "0.4.0",
+		"typescript": "5.9.3"
+	},
+	"keywords": ["pi-package", "lsp", "language-server", "coding-agent"],
+	"author": "Jiang HP",
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"pi": {
+		"extensions": ["./dist/index.js"],
+		"skills": ["./skills"]
+	}
+}
