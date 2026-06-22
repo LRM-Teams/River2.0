@@ -2,8 +2,16 @@
 import { JsonlAuditLog } from "./curator-core/audit.ts";
 import { runMemoryCuratorOnce } from "./curator-core/curate.ts";
 import { FileMemoryStore } from "./curator-store/file-store.ts";
-import { pushEvolution, resolveEvolutionConfig, syncEvolutionAfterChange, createEvolutionSnapshot } from "./evolution/index.ts";
-import { disableCuratorService, enableCuratorService, getCuratorServiceStatus, resolveMemoryDir } from "./service-controller.ts";
+import { defaultRegistryPath, markCurrentRootDirty, scanDirtyRoots } from "./manager/local-curator-manager.ts";
+import {
+	disableCuratorManagerService,
+	disableCuratorService,
+	enableCuratorManagerService,
+	enableCuratorService,
+	getCuratorManagerServiceStatus,
+	getCuratorServiceStatus,
+	resolveMemoryDir,
+} from "./service-controller.ts";
 
 function cliPath(): string {
 	return new URL(import.meta.url).pathname;
@@ -23,11 +31,14 @@ function usage(): string {
 	return [
 		"Usage:",
 		"  jhp-pi-memory-curator run-once [--memory-dir <path>] [--reason <text>] [--dry-run] [--json]",
-		"  jhp-pi-memory-curator snapshot [--memory-dir <path>] [--reason <text>] [--json]",
-		"  jhp-pi-memory-curator push [--memory-dir <path>]",
 		"  jhp-pi-memory-curator enable [--memory-dir <path>] [--schedule HH:MM]",
 		"  jhp-pi-memory-curator disable [--memory-dir <path>]",
 		"  jhp-pi-memory-curator status [--memory-dir <path>]",
+		"  jhp-pi-memory-curator mark-dirty [--registry <path>]",
+		"  jhp-pi-memory-curator manager-scan [--registry <path>] [--json]",
+		"  jhp-pi-memory-curator manager-enable [--registry <path>] [--schedule '0 */6 * * *']",
+		"  jhp-pi-memory-curator manager-disable [--registry <path>]",
+		"  jhp-pi-memory-curator manager-status [--registry <path>]",
 	].join("\n");
 }
 
@@ -41,40 +52,14 @@ async function main(): Promise<void> {
 	}
 
 	if (command === "run-once") {
-		const reason = readOption(args, "--reason") || "cli";
-		const config = resolveEvolutionConfig(memoryDir);
-		if (!hasFlag(args, "--dry-run")) {
-			createEvolutionSnapshot(config, { reason: `curator before ${reason}`, trigger: "external_curator", commitMessage: "memory: snapshot before curator" });
-		}
 		const result = await runMemoryCuratorOnce({
 			memoryStore: new FileMemoryStore(memoryDir),
 			auditLog: new JsonlAuditLog(memoryDir),
-			reason,
+			reason: readOption(args, "--reason") || "cli",
 			dryRun: hasFlag(args, "--dry-run"),
 		});
-		let evolutionCommit = null;
-		if (!hasFlag(args, "--dry-run")) {
-			evolutionCommit = syncEvolutionAfterChange(config, "memory: sync after external curator");
-			if (config.autoPush) pushEvolution(config);
-		}
-		if (hasFlag(args, "--json")) console.log(JSON.stringify({ ...result, evolutionCommit }, null, 2));
-		else console.log(result.summary);
-		return;
-	}
-
-	if (command === "snapshot") {
-		const result = createEvolutionSnapshot(resolveEvolutionConfig(memoryDir), {
-			reason: readOption(args, "--reason") || "cli snapshot",
-			trigger: "cli",
-			commitMessage: "memory: manual snapshot",
-		});
 		if (hasFlag(args, "--json")) console.log(JSON.stringify(result, null, 2));
-		else console.log(result.manifest ? `Snapshot ${result.manifest.id}` : `Snapshot skipped: ${result.skipped}`);
-		return;
-	}
-
-	if (command === "push") {
-		console.log(pushEvolution(resolveEvolutionConfig(memoryDir)) || "Pushed evolution repo.");
+		else console.log(result.summary);
 		return;
 	}
 
@@ -94,6 +79,45 @@ async function main(): Promise<void> {
 
 	if (command === "status") {
 		const result = getCuratorServiceStatus({ memoryDir, cliPath: cliPath() });
+		console.log(result.message);
+		return;
+	}
+
+	if (command === "mark-dirty") {
+		const registryPath = readOption(args, "--registry") || defaultRegistryPath();
+		const record = markCurrentRootDirty(process.env, registryPath);
+		if (hasFlag(args, "--json")) console.log(JSON.stringify(record, null, 2));
+		else console.log(`Marked dirty: ${record.agent_root}`);
+		return;
+	}
+
+	if (command === "manager-scan") {
+		const registryPath = readOption(args, "--registry") || defaultRegistryPath();
+		const result = await scanDirtyRoots(registryPath);
+		if (hasFlag(args, "--json")) console.log(JSON.stringify(result, null, 2));
+		else console.log(`Local curator manager processed ${result.processed} root(s), ${result.failures} failure(s).`);
+		return;
+	}
+
+	if (command === "manager-enable") {
+		const registryPath = readOption(args, "--registry") || defaultRegistryPath();
+		const result = enableCuratorManagerService({ registryPath, cliPath: cliPath(), schedule: readOption(args, "--schedule") });
+		console.log(result.message);
+		process.exitCode = result.ok ? 0 : 1;
+		return;
+	}
+
+	if (command === "manager-disable") {
+		const registryPath = readOption(args, "--registry") || defaultRegistryPath();
+		const result = disableCuratorManagerService({ registryPath, cliPath: cliPath() });
+		console.log(result.message);
+		process.exitCode = result.ok ? 0 : 1;
+		return;
+	}
+
+	if (command === "manager-status") {
+		const registryPath = readOption(args, "--registry") || defaultRegistryPath();
+		const result = getCuratorManagerServiceStatus({ registryPath, cliPath: cliPath() });
 		console.log(result.message);
 		return;
 	}

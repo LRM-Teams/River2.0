@@ -21,6 +21,11 @@ type EvolutionEnv = Partial<
 		| "PI_EVOLUTION_AUTO_COMMIT"
 		| "PI_EVOLUTION_AUTO_PUSH"
 		| "PI_EVOLUTION_MAX_SNAPSHOTS"
+		| "PI_SKILL_DRAFTS_DIR"
+		| "PI_AGENT_ROOT"
+		| "MULTICA_WORKSPACES_ROOT"
+		| "MULTICA_WORKSPACE_ID"
+		| "MULTICA_AGENT_ID"
 		| "HOME"
 		| "USERPROFILE"
 		| "HOMEDRIVE"
@@ -58,8 +63,9 @@ function expandHome(input: string, env: EvolutionEnv): string {
 	return input;
 }
 
-export function resolveEvolutionConfig(memoryDir: string, env: EvolutionEnv = process.env): EvolutionConfig {
+export function resolveEvolutionConfig(memoryDir: string, env: EvolutionEnv = process.env, skillDraftsDir?: string): EvolutionConfig {
 	const agentDir = path.dirname(memoryDir);
+	const resolvedSkillDraftsDir = skillDraftsDir || env.PI_SKILL_DRAFTS_DIR || path.join(agentDir, "skill-drafts");
 	return {
 		enabled: truthy(env.PI_EVOLUTION_ENABLED, true),
 		autoCommit: truthy(env.PI_EVOLUTION_AUTO_COMMIT, true),
@@ -69,6 +75,6 @@ export function resolveEvolutionConfig(memoryDir: string, env: EvolutionEnv = pr
 		remote: env.PI_EVOLUTION_REMOTE?.trim() || null,
 		branch: env.PI_EVOLUTION_BRANCH || DEFAULT_EVOLUTION_BRANCH,
 		memoryDir,
-		skillDraftsDir: path.join(agentDir, "skill-drafts"),
+		skillDraftsDir: resolvedSkillDraftsDir,
 	};
 }

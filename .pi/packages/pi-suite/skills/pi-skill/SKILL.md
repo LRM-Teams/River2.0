@@ -27,7 +27,9 @@ When adding, removing, renaming, or materially changing any pi capability in thi
 
 Installed memory capability comes from `@jhp/pi-memory`, vendored inside `@lebronj/pi-suite` and also usable as a standalone pi package.
 
-Memory files live under `~/.pi/agent/memory/`:
+Memory files live under the resolved memory root. Standalone fallback is `~/.pi/agent/memory`; Multica-connected runs can resolve to `~/multica_workspaces/<workspace_id>/.pi/agents/<agent_id>/memory` with skill drafts under that agent's `skills/drafts`.
+
+Memory files include:
 
 - `MEMORY.md`: durable facts, decisions, and preferences.
 - `USER.md`: structured user profile and stable preferences.
@@ -38,7 +40,8 @@ Memory files live under `~/.pi/agent/memory/`:
 - `.curator-state.json`: last curator run state.
 - `.curator-service.json`: external curator service state.
 - `audit/curator.jsonl`: curator audit trail.
-- `~/.pi/agent/skill-drafts/<slug>/SKILL.md`: disabled skill drafts created after explicit approval.
+- Resolved skill draft root `<slug>/SKILL.md`: disabled skill drafts created after explicit approval.
+- Multica agent roots also contain `inbox/`, `shared-cache/`, `skills/generated/`, `profile/`, `feedback/feedback.jsonl`, and `sync_queue/`.
 
 Memory tools:
 
@@ -47,10 +50,15 @@ Memory tools:
 - `memory_edit`: read/add/replace/remove/replace_all/compact structured entries in `MEMORY.md`, `USER.md`, `STATE.md`, and `REVIEW.md`.
 - `scratchpad`: add/done/undo/clear/list checklist items.
 - `memory_search`: qmd-backed keyword, semantic, or deep search across memory files.
-- `memory_curate`: manually run curator lifecycle rules and scan yesterday's daily log into `REVIEW.md` when learning is enabled.
+- `memory_curate`: manually run curator lifecycle rules and scan yesterday's daily log into `REVIEW.md` when learning is enabled; output includes pending proposal counts.
 - `memory_learning_approve`: approve a proposed memory promotion or disabled skill draft by exact id.
 - `memory_learning_reject`: reject or archive a review candidate/proposal without deleting it.
 - `memory_skill_drafts`: list proposed skill drafts.
+- `memory_skill_list`: list current-agent draft, generated, and enabled memory-managed skills.
+- `memory_skill_enable`: explicitly enable a `draft:<slug>` or `generated:<id>` skill by copying it into `skills/enabled/<skill-name>/` and auditing the action.
+- `memory_skill_disable`: remove an enabled skill copy while preserving its draft/generated source.
+- `/memory-skill`: slash command to list/enable/disable current-agent memory-managed skills.
+- `/memory-review`: slash command to list/show/approve/reject/archive pending memory and skill proposals in the current resolved root.
 - `memory_curator_enable`: enable the external daily curator service using systemd user timer or cron fallback.
 - `memory_curator_disable`: disable and uninstall the external daily curator service.
 - `memory_curator_status`: show service backend, schedule, and state.
@@ -59,6 +67,11 @@ Memory tools:
 - `memory_version_list`: list recent snapshots.
 - `memory_version_restore`: restore `memory`, `skill-drafts`, or `all` from a snapshot id after creating a pre-restore backup.
 - `memory_version_push`: manually push the local evolution repo to GitHub.
+- `memory_sync_upload` / `/memory-sync-upload`: upload governed candidates, profiles, and feedback to Multica when remote config is set.
+- `memory_sync_pull` / `/memory-sync-pull`: pull only current-agent deliveries into local inbox/cache/generated-skill directories.
+- `memory_feedback`: append injected/used/ignored/success/failure/conflict feedback for a shared unit.
+- `memory_curator_manager_mark_dirty` and `memory_curator_manager_scan` / `/memory-curator-manager-scan`: register dirty roots and process them through the singleton Local Curator Manager.
+- `memory_curator_manager_enable`, `memory_curator_manager_status`, `memory_curator_manager_disable` and `/memory-curator-manager-*` commands: manage the singleton manager service; default schedule is every 6 hours and it only processes dirty roots.
 
 Structured metadata example:
 
@@ -77,12 +90,17 @@ Curator and learning behavior:
 - Session shutdown may extract conservative learning candidates into `REVIEW.md`; they are not injected as normal memory and are not auto-enabled.
 - `memory_curate` scans yesterday's daily log once per content hash into review candidates, then curator lifecycle and proposal rules process those candidates.
 - Repeated candidates can become proposed memory promotions or proposed disabled skill drafts after `memory_curate`.
-- Approval is explicit by default: memory proposals write to memory stores; skill proposals write disabled drafts under `~/.pi/agent/skill-drafts/`.
+- Approval is explicit by default: memory proposals write to memory stores; skill proposals write disabled drafts under the resolved skill draft root.
+- Draft and generated skills stay disabled until `memory_skill_enable` copies them into `skills/enabled`; enabled skills are injected as `<available_skills>` metadata for the current agent.
+- Pi session start can show one pending-review hint; disable with `PI_MEMORY_REVIEW_STARTUP_HINT=0`.
+- Local multi-agent self-evolution supports one Local Curator Manager registry/dirty-root API for many agent roots, plus a manager service that runs `manager-scan` every 6 hours and exits quickly when no root is dirty.
+- The local loop also covers share candidate queue, profile generation, sync upload/pull, downflow receive cache, generated skills, enabled skill lifecycle, and feedback JSONL helpers.
+- Server downflow is per-Agent delivery, not broadcast; local receive writes only `inbox/`, `shared-cache/`, or `skills/generated/` and never overwrites formal memory or auto-enables skills.
 - The curator avoids semantic auto-delete/merge; ambiguous learning stays in review first.
 
 Memory versioning:
 
-- Runtime memory remains authoritative at `~/.pi/agent/memory`; disabled skill drafts remain authoritative at `~/.pi/agent/skill-drafts`.
+- Runtime memory remains authoritative at the resolved memory root; disabled skill drafts remain authoritative at the resolved skill draft root.
 - Versioning mirror and snapshots live at `~/.pi/agent/evolution` by default.
 - No remote is configured by default; memory evolution stays local per user/machine unless the user adds a personal private remote.
 - Automatic local snapshot + commit is enabled by default; automatic push is disabled unless `PI_EVOLUTION_AUTO_PUSH=1`.
@@ -114,6 +132,10 @@ QMD search:
 Useful memory environment variables:
 
 - `PI_MEMORY_DIR`: override memory storage directory.
+- `PI_SKILL_DRAFTS_DIR`: override disabled skill draft root.
+- `PI_AGENT_ROOT`: current local agent root; derives memory, skill drafts, inbox, shared cache, profile, feedback, and sync queue.
+- `MULTICA_WORKSPACE_ID`, `MULTICA_AGENT_ID`, `MULTICA_WORKSPACES_ROOT`, `MULTICA_RUN_ID`: Multica scoped root and feedback context.
+- `PI_AGENT_INBOX_DIR`, `PI_AGENT_SHARED_CACHE_DIR`, `PI_AGENT_PROFILE_DIR`, `PI_AGENT_FEEDBACK_DIR`, `PI_AGENT_SYNC_QUEUE_DIR`: override agent subdirectories.
 - `PI_MEMORY_SNAPSHOT`: `stable` or `per-turn` context injection mode.
 - `PI_MEMORY_QMD_UPDATE`: `background`, `manual`, or `off`.
 - `PI_MEMORY_NO_SEARCH=1`: disable per-turn search injection.
@@ -123,6 +145,8 @@ Useful memory environment variables:
 - `PI_MEMORY_AUTO_APPROVE_MEMORY=1`: automatically approve newly created memory proposals.
 - `PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS=1`: automatically create newly proposed disabled skill drafts.
 - `PI_MEMORY_CURATOR_STARTUP_HINT=0`: hide the disabled-curator startup hint.
+- `PI_MEMORY_REVIEW_STARTUP_HINT=0`: hide pending review proposal startup hints.
+- `PI_MEMORY_REMOTE_URL` and `PI_MEMORY_REMOTE_TOKEN`: enable Multica candidate/profile/feedback upload and current-agent delivery pull.
 - `PI_EVOLUTION_ENABLED=0`: disable snapshot + git versioning.
 - `PI_EVOLUTION_DIR`: override evolution repo directory; default `~/.pi/agent/evolution`.
 - `PI_EVOLUTION_REMOTE`: optional personal private Git remote; unset by default.

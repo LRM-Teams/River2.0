@@ -15,7 +15,7 @@ pi install npm:pi-web-access
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.16.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.17.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
@@ -23,7 +23,7 @@ curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.16.tgz | 
 - Local extensions: autogoal, goal mode, pet, prompt URL widget, snake, TPS notifications.
 - Prompts: changelog audit, issue analysis, PR review, review workflow, commit workflow, wrap workflow.
 - Skills: provider checklist, Pi capability reference, image-to-editable-PPT workflow.
-- Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, and memory/skill-draft versioning.
+- Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, memory/skill-draft versioning, scoped Multica agent roots, review reminders, and local memory/skill self-evolution queues.
 
 Install the companion packages above with the suite so MCP, subagent, and web tools register from their own package manifests. The bootstrap script installs the same companion packages automatically.
 
@@ -103,7 +103,15 @@ qmd collection add ~/.pi/agent/memory --name pi-memory
 qmd embed
 ```
 
-Memory versioning is enabled by default. It snapshots `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts` into `~/.pi/agent/evolution`, commits local changes automatically, and leaves push manual by default. `memory_curate` also scans yesterday's daily log into `REVIEW.md` when learning is enabled and the daily file changed since the last scan.
+Memory versioning is enabled by default. It snapshots the resolved memory root and resolved disabled skill-draft root into the local evolution repo, commits local changes automatically, and leaves push manual by default. Standalone Pi resolves to `~/.pi/agent/memory` and `~/.pi/agent/skill-drafts`; Multica-connected runs can resolve to `~/multica_workspaces/<workspace_id>/.pi/agents/<agent_id>/memory` and `skills/drafts`. `memory_curate` also scans yesterday's daily log into `REVIEW.md` when learning is enabled and the daily file changed since the last scan.
+
+For local multi-agent self-evolution, `@jhp/pi-memory` now supports:
+
+- `PI_MEMORY_DIR`, `PI_SKILL_DRAFTS_DIR`, `PI_AGENT_ROOT`, `MULTICA_WORKSPACE_ID`, `MULTICA_AGENT_ID`, and `MULTICA_WORKSPACES_ROOT` resolvers.
+- Agent root initialization with isolated `memory/`, `skills/drafts`, `skills/generated`, `inbox/`, `shared-cache/`, `profile/`, `feedback/`, and `sync_queue/` directories.
+- `/memory-review` plus startup and `memory_curate` pending proposal reminders.
+- A Local Curator Manager registry/dirty-root API for one local manager to process many agent roots safely.
+- Share candidate, downflow receive, sync upload/pull, profile generation, Local Curator Manager tools, and feedback JSONL helpers. Server downflow is per-Agent delivery, not broadcast, and local delivery never overwrites formal memory or auto-enables skills.
 
 The external memory curator service uses a systemd user timer when available, with cron fallback. When the service points at a vendored TypeScript CLI under `node_modules`, the launcher uses Bun or tsx instead of plain Node so Node 22 can run it reliably.
 

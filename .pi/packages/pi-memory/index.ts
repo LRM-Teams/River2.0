@@ -26,6 +26,7 @@
  */
 
 import { type ExecFileOptions, execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { complete, type Message, StringEnum } from "@earendil-works/pi-ai";
@@ -48,55 +49,102 @@ import {
 	type ReviewCandidateInput,
 } from "./src/learning/candidates.ts";
 import { applyReviewLifecycle, approveMemoryPromotion, proposeMemoryPromotions, rejectReviewItem } from "./src/learning/memory.ts";
+import { generateShareCandidatesFromReview } from "./src/governance/share-candidates.ts";
+import { compactProcessedReviewEntries } from "./src/learning/review-compact.ts";
+import { countPendingReviewItems, formatPendingReviewList, formatPendingReviewSummary, listPendingReviewItems } from "./src/learning/review-summary.ts";
+import { defaultRegistryPath, markCurrentRootDirty, scanDirtyRoots } from "./src/manager/local-curator-manager.ts";
 import { approveSkillDraft, listSkillDraftProposals, proposeSkillDrafts } from "./src/learning/skills.ts";
+import { disableMemorySkill, enableMemorySkill, formatEnabledSkillsForPrompt, formatSkillList, listMemorySkills } from "./src/skills/lifecycle.ts";
+import { generateProfiles } from "./src/profile/generator.ts";
+import { syncPull, syncUpload } from "./src/sync/connector.ts";
+import { appendFeedbackEvent, buildFeedbackEvent } from "./src/sync/feedback.ts";
+import { detectSensitivity } from "./src/sync/sensitivity.ts";
 import { FileMemoryStore } from "./src/curator-store/file-store.ts";
-import { disableCuratorService, enableCuratorService, getCuratorServiceStatus } from "./src/service-controller.ts";
+import {
+	ensureAgentRoot,
+	resolveAgentRoot,
+	resolveAgentRoots,
+	resolveFeedbackDir,
+	resolveInboxDir,
+	resolveMemoryRoot,
+	resolveProfileDir,
+	resolveSharedCacheDir,
+	resolveSkillDraftRoot,
+	resolveSyncQueueDir,
+	type PiAgentEnv,
+} from "./src/paths/resolve-roots.ts";
+import {
+	disableCuratorManagerService,
+	disableCuratorService,
+	enableCuratorManagerService,
+	enableCuratorService,
+	getCuratorManagerServiceStatus,
+	getCuratorServiceStatus,
+} from "./src/service-controller.ts";
 
 
 // ---------------------------------------------------------------------------
 // Paths (mutable for testing via _setBaseDir / _resetBaseDir)
 // ---------------------------------------------------------------------------
 
-type MemoryEnv = Partial<
-	Record<"PI_MEMORY_DIR" | "HOME" | "USERPROFILE" | "HOMEDRIVE" | "HOMEPATH", string | undefined>
-> & {
-	[key: string]: string | undefined;
-};
+type MemoryEnv = PiAgentEnv & { [key: string]: string | undefined };
 
 export function resolveMemoryDir(env: MemoryEnv = process.env): string {
-	if (env.PI_MEMORY_DIR) return env.PI_MEMORY_DIR;
-	const home =
-		env.HOME ??
-		env.USERPROFILE ??
-		(env.HOMEDRIVE && env.HOMEPATH ? `${env.HOMEDRIVE}${env.HOMEPATH}` : undefined) ??
-		"~";
-	return path.join(home, ".pi", "agent", "memory");
+	return resolveMemoryRoot(env);
 }
 
-let MEMORY_DIR = resolveMemoryDir();
+export function resolveSkillDraftDir(env: MemoryEnv = process.env): string {
+	return resolveSkillDraftRoot(env);
+}
+
+export {
+	ensureAgentRoot,
+	resolveAgentRoot,
+	resolveFeedbackDir,
+	resolveInboxDir,
+	resolveMemoryRoot,
+	resolveProfileDir,
+	resolveSharedCacheDir,
+	resolveSkillDraftRoot,
+	resolveSyncQueueDir,
+};
+
+const INITIAL_ROOTS = resolveAgentRoots();
+let AGENT_ROOT = INITIAL_ROOTS.agentRoot;
+let MEMORY_DIR = INITIAL_ROOTS.memoryDir;
 let MEMORY_FILE = path.join(MEMORY_DIR, "MEMORY.md");
 let USER_FILE = path.join(MEMORY_DIR, "USER.md");
 let STATE_FILE = path.join(MEMORY_DIR, "STATE.md");
 let REVIEW_FILE = path.join(MEMORY_DIR, "REVIEW.md");
 let SCRATCHPAD_FILE = path.join(MEMORY_DIR, "SCRATCHPAD.md");
 let DAILY_DIR = path.join(MEMORY_DIR, "daily");
-let SKILL_DRAFTS_DIR = path.join(path.dirname(MEMORY_DIR), "skill-drafts");
+let SKILL_DRAFTS_DIR = INITIAL_ROOTS.skillDraftsDir;
+
+function setResolvedDirs(memoryDir: string, skillDraftsDir: string, agentRoot?: string) {
+	AGENT_ROOT = agentRoot;
+	MEMORY_DIR = memoryDir;
+	MEMORY_FILE = path.join(memoryDir, "MEMORY.md");
+	USER_FILE = path.join(memoryDir, "USER.md");
+	STATE_FILE = path.join(memoryDir, "STATE.md");
+	REVIEW_FILE = path.join(memoryDir, "REVIEW.md");
+	SCRATCHPAD_FILE = path.join(memoryDir, "SCRATCHPAD.md");
+	DAILY_DIR = path.join(memoryDir, "daily");
+	SKILL_DRAFTS_DIR = skillDraftsDir;
+}
 
 /** Override base directory (for testing). */
-export function _setBaseDir(baseDir: string) {
-	MEMORY_DIR = baseDir;
-	MEMORY_FILE = path.join(baseDir, "MEMORY.md");
-	USER_FILE = path.join(baseDir, "USER.md");
-	STATE_FILE = path.join(baseDir, "STATE.md");
-	REVIEW_FILE = path.join(baseDir, "REVIEW.md");
-	SCRATCHPAD_FILE = path.join(baseDir, "SCRATCHPAD.md");
-	DAILY_DIR = path.join(baseDir, "daily");
-	SKILL_DRAFTS_DIR = path.join(path.dirname(baseDir), "skill-drafts");
+export function _setBaseDir(baseDir: string, skillDraftsDir = path.join(path.dirname(baseDir), "skill-drafts")) {
+	setResolvedDirs(baseDir, skillDraftsDir);
+}
+
+function refreshResolvedDirsFromEnv() {
+	const roots = resolveAgentRoots();
+	setResolvedDirs(roots.memoryDir, roots.skillDraftsDir, roots.agentRoot);
 }
 
 /** Reset to default paths (for testing). */
 export function _resetBaseDir() {
-	_setBaseDir(resolveMemoryDir());
+	refreshResolvedDirsFromEnv();
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +154,22 @@ export function _resetBaseDir() {
 export function ensureDirs() {
 	fs.mkdirSync(MEMORY_DIR, { recursive: true });
 	fs.mkdirSync(DAILY_DIR, { recursive: true });
+	fs.mkdirSync(path.join(MEMORY_DIR, "audit"), { recursive: true });
+	fs.mkdirSync(SKILL_DRAFTS_DIR, { recursive: true });
+	for (const filePath of [MEMORY_FILE, USER_FILE, STATE_FILE, REVIEW_FILE]) {
+		if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "", "utf-8");
+	}
+	if (!fs.existsSync(SCRATCHPAD_FILE)) fs.writeFileSync(SCRATCHPAD_FILE, "# Scratchpad\n", "utf-8");
+	if (AGENT_ROOT) ensureAgentRoot(process.env);
+}
+
+function markDirtyBestEffort(): void {
+	if (!AGENT_ROOT) return;
+	try {
+		markCurrentRootDirty(process.env);
+	} catch {
+		// Dirty marking must not break memory writes or session shutdown.
+	}
 }
 
 export function todayStr(): string {
@@ -640,7 +704,7 @@ export function parseLearningExtractorResponse(raw: string): ReviewCandidateInpu
 		const signature = typeof record.signature === "string" ? record.signature.trim() : "";
 		if (!kind || !confidence || !signature || !shouldKeepLearningCandidate(confidence)) continue;
 		const targetHints = Array.isArray(record.targetHints)
-			? record.targetHints.filter((hint): hint is ReviewCandidateInput["targetHints"][number] => typeof hint === "string" && REVIEW_TARGET_HINTS.includes(hint as ReviewCandidateInput["targetHints"][number]))
+			? record.targetHints.filter((hint): hint is NonNullable<ReviewCandidateInput["targetHints"]>[number] => typeof hint === "string" && REVIEW_TARGET_HINTS.includes(hint as NonNullable<ReviewCandidateInput["targetHints"]>[number]))
 			: undefined;
 		candidates.push({
 			kind,
@@ -778,7 +842,9 @@ function formatTransitionHandoffReason(reason: TransitionHandoffReason): string 
 }
 
 function getMessageText(message: Message): string {
-	return message.content
+	const content = message.content;
+	if (typeof content === "string") return content.trim();
+	return content
 		.map((part) => (part.type === "text" ? part.text : ""))
 		.join("\n")
 		.trim();
@@ -793,7 +859,7 @@ export function buildTransitionHandoff(ctx: ExtensionContext, reason: Transition
 	const branch = getSessionBranch(ctx);
 	const recentMessages = (branch ?? [])
 		.filter((entry): entry is SessionEntry & { type: "message" } => entry.type === "message")
-		.map((entry) => entry.message)
+		.map((entry) => entry.message as Message)
 		.map((message) => ({ role: message.role, text: previewMessageText(getMessageText(message)) }))
 		.filter((message) => message.text)
 		.slice(-6);
@@ -1012,6 +1078,61 @@ export function buildMemoryContext(searchResults?: string): string {
 	return context;
 }
 
+
+function buildSharedCacheContext(prompt: string): string {
+	const roots = resolveAgentRoots(process.env);
+	if (!roots.sharedCacheDir && !roots.agentRoot) return "";
+	const promptText = prompt.toLowerCase();
+	const units: Array<{ id: string; unitType: "memory" | "skill"; title: string; text: string; score: number }> = [];
+	const memoryDir = roots.sharedCacheDir ? path.join(roots.sharedCacheDir, "memory") : undefined;
+	if (memoryDir && fs.existsSync(memoryDir)) {
+		for (const name of fs.readdirSync(memoryDir).filter((file) => file.endsWith(".json"))) {
+			try {
+				const delivery = JSON.parse(fs.readFileSync(path.join(memoryDir, name), "utf-8")) as { shared_unit_id?: string; id?: string; content?: string; tags?: string[]; score?: number };
+				const content = String(delivery.content || "").trim();
+				if (!content || detectSensitivity(content) === "secret") continue;
+				const id = delivery.shared_unit_id || delivery.id || name.replace(/\.json$/, "");
+				units.push({ id, unitType: "memory", title: `Shared memory ${id}`, text: content, score: sharedUnitScore(promptText, content, delivery.tags, delivery.score) });
+			} catch {
+				// Ignore malformed shared-cache entries.
+			}
+		}
+	}
+	const generatedDir = roots.agentRoot ? path.join(roots.agentRoot, "skills", "generated") : undefined;
+	if (generatedDir && fs.existsSync(generatedDir)) {
+		for (const name of fs.readdirSync(generatedDir)) {
+			const skillPath = path.join(generatedDir, name, "SKILL.md");
+			if (!fs.existsSync(skillPath)) continue;
+			const content = fs.readFileSync(skillPath, "utf-8").trim();
+			if (!content || detectSensitivity(content) === "secret") continue;
+			const score = sharedUnitScore(promptText, content, undefined, undefined);
+			if (score > 0) units.push({ id: name, unitType: "skill", title: `Generated shared skill ${name}`, text: content.split("\n").slice(0, 20).join("\n"), score });
+		}
+	}
+	const selected = units.filter((unit) => unit.score > 0).sort((a, b) => b.score - a.score).slice(0, 4);
+	if (selected.length === 0) return "";
+	for (const unit of selected) {
+		try {
+			appendFeedbackEvent(buildFeedbackEvent({ shared_unit_id: unit.id, unit_type: unit.unitType, event: "injected", outcome: "neutral" }), process.env);
+		} catch {
+			// Feedback must not block context injection.
+		}
+	}
+	return selected.map((unit) => `### ${unit.title}\n${unit.text}`).join("\n\n---\n\n");
+}
+
+function sharedUnitScore(promptText: string, content: string, tags: string[] | undefined, remoteScore: number | undefined): number {
+	let score = typeof remoteScore === "number" ? remoteScore : 0;
+	for (const tag of tags || []) {
+		if (promptText.includes(tag.toLowerCase())) score += 2;
+	}
+	const words = new Set(promptText.split(/[^a-zA-Z0-9_\u4e00-\u9fff]+/).filter((word) => word.length >= 3));
+	for (const word of words) {
+		if (content.toLowerCase().includes(word)) score += 1;
+	}
+	return score;
+}
+
 // ---------------------------------------------------------------------------
 // QMD integration
 // ---------------------------------------------------------------------------
@@ -1142,6 +1263,12 @@ export function _clearQmdStatusCaches() {
 
 const QMD_REPO_URL = "https://github.com/tobi/qmd";
 
+function qmdCollectionName(): string {
+	const scoped = process.env.PI_MEMORY_DIR || process.env.PI_AGENT_ROOT || (process.env.MULTICA_WORKSPACE_ID && process.env.MULTICA_AGENT_ID);
+	if (!scoped) return "pi-memory";
+	return `pi-memory-${createHash("sha1").update(MEMORY_DIR).digest("hex").slice(0, 12)}`;
+}
+
 export function qmdInstallInstructions(): string {
 	return [
 		"memory_search requires qmd.",
@@ -1151,17 +1278,17 @@ export function qmdInstallInstructions(): string {
 		"  # ensure ~/.bun/bin is in your PATH",
 		"",
 		"Then set up the collection (one-time):",
-		`  qmd collection add ${MEMORY_DIR} --name pi-memory`,
+		`  qmd collection add ${MEMORY_DIR} --name ${qmdCollectionName()}`,
 		"  qmd embed",
 	].join("\n");
 }
 
 export function qmdCollectionInstructions(): string {
 	return [
-		"qmd collection pi-memory is not configured.",
+		"qmd collection for the current memory root is not configured.",
 		"",
 		"Set up the collection (one-time):",
-		`  qmd collection add ${MEMORY_DIR} --name pi-memory`,
+		`  qmd collection add ${MEMORY_DIR} --name ${qmdCollectionName()}`,
 		"  qmd embed",
 	].join("\n");
 }
@@ -1170,7 +1297,7 @@ export function qmdCollectionInstructions(): string {
 export async function setupQmdCollection(): Promise<boolean> {
 	try {
 		await new Promise<void>((resolve, reject) => {
-			execFileFn("qmd", ["collection", "add", MEMORY_DIR, "--name", "pi-memory"], { timeout: 10_000 }, (err) =>
+			execFileFn("qmd", ["collection", "add", MEMORY_DIR, "--name", qmdCollectionName()], { timeout: 10_000 }, (err) =>
 				err ? reject(err) : resolve(),
 			);
 		});
@@ -1190,7 +1317,7 @@ export async function setupQmdCollection(): Promise<boolean> {
 	for (const [ctxPath, desc] of contexts) {
 		try {
 			await new Promise<void>((resolve, reject) => {
-				execFileFn("qmd", ["context", "add", ctxPath, desc, "-c", "pi-memory"], { timeout: 10_000 }, (err) =>
+				execFileFn("qmd", ["context", "add", ctxPath, desc, "-c", qmdCollectionName()], { timeout: 10_000 }, (err) =>
 					err ? reject(err) : resolve(),
 				);
 			});
@@ -1198,9 +1325,9 @@ export async function setupQmdCollection(): Promise<boolean> {
 			// Ignore — context may already exist
 		}
 	}
-	// Seed the cache so checkCollection("pi-memory") doesn't redundantly re-run
+	// Seed the cache so checkCollection(qmdCollectionName()) doesn't redundantly re-run
 	// setupQmdCollection during the short negative-cache window.
-	qmdCollectionStatusCache.set("pi-memory", { checkedAt: Date.now(), exists: true });
+	qmdCollectionStatusCache.set(qmdCollectionName(), { checkedAt: Date.now(), exists: true });
 	return true;
 }
 
@@ -1259,6 +1386,7 @@ export function checkCollection(name: string): Promise<boolean> {
 }
 
 export function scheduleQmdUpdate() {
+	markDirtyBestEffort();
 	if (getQmdUpdateMode() !== "background") return;
 	if (!qmdAvailable) return;
 	if (updateTimer) clearTimeout(updateTimer);
@@ -1269,6 +1397,7 @@ export function scheduleQmdUpdate() {
 }
 
 async function runQmdUpdateNow() {
+	markDirtyBestEffort();
 	if (getQmdUpdateMode() !== "background") return;
 	if (!qmdAvailable) return;
 	await new Promise<void>((resolve) => {
@@ -1289,7 +1418,7 @@ export async function searchRelevantMemories(prompt: string): Promise<string> {
 	if (!sanitized) return "";
 
 	try {
-		const hasCollection = await checkCollection("pi-memory");
+		const hasCollection = await checkCollection(qmdCollectionName());
 		if (!hasCollection) return "";
 
 		const results = await Promise.race([
@@ -1368,7 +1497,7 @@ export function runQmdSearch(
 	limit: number,
 ): Promise<{ results: QmdSearchResult[]; stderr: string }> {
 	const subcommand = mode === "keyword" ? "search" : mode === "semantic" ? "vsearch" : "query";
-	const args = [subcommand, "--json", "-c", "pi-memory", "-n", String(limit), query];
+	const args = [subcommand, "--json", "-c", qmdCollectionName(), "-n", String(limit), query];
 
 	return new Promise((resolve, reject) => {
 		execFileFn("qmd", args, { timeout: 60_000 }, (err, stdout, stderr) => {
@@ -1458,7 +1587,21 @@ async function runCurator(reason: string): Promise<string> {
 		autoApprovedMemory > 0 ? `auto-approved ${autoApprovedMemory} memory promotion(s)` : "",
 		autoApprovedSkills > 0 ? `auto-approved ${autoApprovedSkills} skill draft(s)` : "",
 	].filter(Boolean);
-	return notes.length > 0 ? `${result.summary}; ${notes.join("; ")}` : result.summary;
+	const baseSummary = notes.length > 0 ? `${result.summary}; ${notes.join("; ")}` : result.summary;
+	let shareCandidateNote = "";
+	if (AGENT_ROOT) {
+		try {
+			const shareResult = await generateShareCandidatesFromReview(store, process.env);
+			generateProfiles(process.env);
+			if (shareResult.created > 0 || shareResult.errors.length > 0) {
+				shareCandidateNote = `\nGenerated ${shareResult.created} share candidate(s)${shareResult.errors.length ? `; ${shareResult.errors.length} error(s)` : ""}.`;
+			}
+		} catch {
+			// Share candidate/profile generation is best-effort and must not block local curation.
+		}
+	}
+	const pending = countPendingReviewItems(readFileSafe(REVIEW_FILE) ?? "");
+	return `${baseSummary}${shareCandidateNote}\n${formatPendingReviewSummary(pending)}`;
 }
 
 /** Reset snapshot state (for testing). */
@@ -1477,6 +1620,7 @@ export function _resetMemorySnapshot() {
 export default function (pi: ExtensionAPI) {
 	// --- session_start: detect qmd, auto-setup collection ---
 	pi.on("session_start", async (_event, ctx) => {
+		refreshResolvedDirsFromEnv();
 		ensureDirs();
 		exitSummaryReason = null;
 		if (terminalInputUnsubscribe) {
@@ -1491,6 +1635,12 @@ export default function (pi: ExtensionAPI) {
 				exitSummaryReason = "ctrl+d";
 				return undefined;
 			});
+			if (process.env.PI_MEMORY_REVIEW_STARTUP_HINT !== "0") {
+				const pending = countPendingReviewItems(readFileSafe(REVIEW_FILE) ?? "");
+				if (pending.total > 0) {
+					ctx.ui.notify(`Memory review: ${pending.memory} memory / ${pending.skill} skill proposals pending. Run /memory-review.`, "info");
+				}
+			}
 		}
 
 		qmdAvailable = await detectQmd();
@@ -1502,7 +1652,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		const hasCollection = await checkCollection("pi-memory");
+		const hasCollection = await checkCollection(qmdCollectionName());
 		if (!hasCollection) {
 			await setupQmdCollection();
 		}
@@ -1555,7 +1705,11 @@ export default function (pi: ExtensionAPI) {
 					const existing = readFileSafe(filePath) ?? "";
 					const separator = existing.trim() ? "\n\n" : "";
 					fs.writeFileSync(filePath, existing + separator + entry, "utf-8");
-					await runSessionLearningExtractor(ctx);
+					const newCandidates = await runSessionLearningExtractor(ctx);
+					if (ctx.hasUI && process.env.PI_MEMORY_REVIEW_SESSION_SUMMARY !== "0") {
+						const pending = countPendingReviewItems(readFileSafe(REVIEW_FILE) ?? "");
+						ctx.ui.notify(`Memory learning today: ${newCandidates} new candidate(s), ${pending.memory} memory proposal(s) pending, ${pending.skill} skill proposal(s) pending.`, "info");
+					}
 					await ensureQmdAvailableForUpdate();
 					await runQmdUpdateNow();
 				}
@@ -1600,6 +1754,20 @@ export default function (pi: ExtensionAPI) {
 				`Snapshot ${snapshotReason} at ${snapshotTakenAt}. ` +
 				"Use memory_read / memory_search for the authoritative latest state; " +
 				"recent writes may also be visible in tool-call history.";
+		}
+
+		const sharedContext = buildSharedCacheContext(event.prompt ?? "");
+		if (sharedContext) {
+			memoryContext = memoryContext
+				? `${memoryContext}\n\n---\n\n## Matched Shared Cache\n\n${sharedContext}`
+				: `# Memory\n\n## Matched Shared Cache\n\n${sharedContext}`;
+		}
+
+		const enabledSkillsContext = formatEnabledSkillsForPrompt(process.env);
+		if (enabledSkillsContext) {
+			memoryContext = memoryContext
+				? `${memoryContext}\n\n---\n\n## Enabled Agent Skills\n\n${enabledSkillsContext}`
+				: `# Memory\n\n## Enabled Agent Skills\n\n${enabledSkillsContext}`;
 		}
 
 		if (!memoryContext) return;
@@ -2158,6 +2326,59 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		name: "memory_skill_list",
+		label: "Memory Skill List",
+		description: "List current-agent draft, generated, and enabled memory-managed skills.",
+		parameters: Type.Object({}),
+		async execute(): Promise<any> {
+			try {
+				const skills = listMemorySkills(process.env);
+				return { content: [{ type: "text", text: formatSkillList(skills) }], details: skills };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_skill_enable",
+		label: "Memory Skill Enable",
+		description: "Enable a current-agent skill from drafts or generated deliveries. Use source like draft:<slug> or generated:<id>.",
+		parameters: Type.Object({
+			source: Type.String({ description: "Skill source, e.g. draft:my-skill or generated:unit_123" }),
+			force: Type.Optional(Type.Boolean({ description: "Replace an existing enabled skill with the same name" })),
+		}),
+		async execute(_toolCallId, params): Promise<any> {
+			try {
+				const result = enableMemorySkill(params.source, { force: params.force, env: process.env });
+				return { content: [{ type: "text", text: `Enabled skill ${result.enabled.name}: ${result.path}` }], details: result };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_skill_disable",
+		label: "Memory Skill Disable",
+		description: "Disable an enabled current-agent memory-managed skill by id or skill name. Draft/generated sources are kept.",
+		parameters: Type.Object({
+			id: Type.String({ description: "Enabled skill id or frontmatter name" }),
+		}),
+		async execute(_toolCallId, params): Promise<any> {
+			try {
+				const result = disableMemorySkill(params.id, process.env);
+				return { content: [{ type: "text", text: `Disabled skill ${result.id}: ${result.path}` }], details: result };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
 	// --- memory_curate tool ---
 	pi.registerTool({
 		name: "memory_curate",
@@ -2237,6 +2458,310 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		name: "memory_feedback",
+		label: "Memory Feedback",
+		description: "Record injected/used/ignored/success/failure/conflict feedback for a downflowed shared memory or skill.",
+		parameters: Type.Object({
+			shared_unit_id: Type.String({ description: "Shared unit id" }),
+			unit_type: StringEnum(["memory", "skill"] as const, { description: "Shared unit type" }),
+			event: StringEnum(["injected", "used", "ignored", "success", "failure", "conflict"] as const, { description: "Feedback event" }),
+			outcome: Type.Optional(StringEnum(["success", "failure", "neutral"] as const, { description: "Optional outcome" })),
+			task_type: Type.Optional(Type.String({ description: "Optional task type" })),
+		}),
+		async execute(_toolCallId, params): Promise<any> {
+			try {
+				const event = buildFeedbackEvent({
+					shared_unit_id: params.shared_unit_id,
+					unit_type: params.unit_type as "memory" | "skill",
+					event: params.event as "injected" | "used" | "ignored" | "success" | "failure" | "conflict",
+					outcome: params.outcome as "success" | "failure" | "neutral" | undefined,
+					task_type: params.task_type,
+				});
+				const filePath = appendFeedbackEvent(event);
+				markDirtyBestEffort();
+				return { content: [{ type: "text", text: `Recorded feedback: ${filePath}` }], details: { path: filePath, event } };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_curator_manager_mark_dirty",
+		label: "Memory Curator Manager Mark Dirty",
+		description: "Register and mark the current Multica agent root dirty for the singleton Local Curator Manager.",
+		parameters: Type.Object({}),
+		async execute(): Promise<any> {
+			try {
+				const record = markCurrentRootDirty(process.env);
+				return { content: [{ type: "text", text: `Marked dirty: ${record.agent_root}` }], details: record };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_curator_manager_scan",
+		label: "Memory Curator Manager Scan",
+		description: "Process dirty roots from the singleton Local Curator Manager registry with per-root locks.",
+		parameters: Type.Object({
+			registry: Type.Optional(Type.String({ description: "Optional registry path" })),
+		}),
+		async execute(_toolCallId, params): Promise<any> {
+			try {
+				const registryPath = params.registry || defaultRegistryPath();
+				const result = await scanDirtyRoots(registryPath);
+				return { content: [{ type: "text", text: `Local curator manager processed ${result.processed} root(s), ${result.failures} failure(s).` }], details: { registryPath, ...result } };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_curator_manager_enable",
+		label: "Memory Curator Manager Enable",
+		description: "Enable the singleton Local Curator Manager service. Default schedule checks dirty roots every 6 hours.",
+		parameters: Type.Object({
+			registry: Type.Optional(Type.String({ description: "Optional registry path" })),
+			schedule: Type.Optional(Type.String({ description: "Cron or systemd calendar schedule. Default: 0 */6 * * *." })),
+		}),
+		execute(_toolCallId, params): any {
+			const registryPath = params.registry || defaultRegistryPath();
+			const result = enableCuratorManagerService({ registryPath, cliPath: new URL("./src/cli.ts", import.meta.url).pathname, schedule: params.schedule });
+			return { content: [{ type: "text", text: result.message }], details: result, isError: !result.ok };
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_curator_manager_disable",
+		label: "Memory Curator Manager Disable",
+		description: "Disable the singleton Local Curator Manager service.",
+		parameters: Type.Object({
+			registry: Type.Optional(Type.String({ description: "Optional registry path" })),
+		}),
+		execute(_toolCallId, params): any {
+			const registryPath = params.registry || defaultRegistryPath();
+			const result = disableCuratorManagerService({ registryPath, cliPath: new URL("./src/cli.ts", import.meta.url).pathname });
+			return { content: [{ type: "text", text: result.message }], details: result, isError: !result.ok };
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_curator_manager_status",
+		label: "Memory Curator Manager Status",
+		description: "Show the singleton Local Curator Manager service status.",
+		parameters: Type.Object({
+			registry: Type.Optional(Type.String({ description: "Optional registry path" })),
+		}),
+		execute(_toolCallId, params): any {
+			const registryPath = params.registry || defaultRegistryPath();
+			const result = getCuratorManagerServiceStatus({ registryPath, cliPath: new URL("./src/cli.ts", import.meta.url).pathname });
+			return { content: [{ type: "text", text: result.message }], details: result, isError: !result.ok };
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_sync_upload",
+		label: "Memory Sync Upload",
+		description: "Upload governed local memory/skill candidates, profiles, and feedback to Multica when PI_MEMORY_REMOTE_URL/TOKEN are configured.",
+		parameters: Type.Object({}),
+		async execute() {
+			try {
+				const result = await syncUpload();
+				return { content: [{ type: "text", text: result.skipped || `Uploaded ${result.candidates} candidate(s), ${result.profiles} profile file(s), ${result.feedback} feedback event(s).` }], details: result };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { ok: false, skipped: message, candidates: 0, feedback: 0, profiles: 0 }, isError: true };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "memory_sync_pull",
+		label: "Memory Sync Pull",
+		description: "Pull Multica evolution deliveries for the current agent and write only inbox/shared-cache/generated-skill files.",
+		parameters: Type.Object({
+			limit: Type.Optional(Type.Number({ description: "Maximum deliveries to pull. Default: 20." })),
+		}),
+		async execute(_toolCallId, params) {
+			try {
+				const result = await syncPull(process.env, params.limit ?? 20);
+				return { content: [{ type: "text", text: result.skipped || `Pulled ${result.received} delivery(s), rejected ${result.rejected}.` }], details: result };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { ok: false, skipped: message, received: 0, rejected: 0, written: [] }, isError: true };
+			}
+		},
+	});
+
+	pi.registerCommand("memory-curator-manager-scan", {
+		description: "Run the singleton Local Curator Manager over dirty roots",
+		handler: async (args, ctx) => {
+			try {
+				const registryPath = args.trim() || defaultRegistryPath();
+				const result = await scanDirtyRoots(registryPath);
+				ctx.ui.notify(`Local curator manager processed ${result.processed} root(s), ${result.failures} failure(s).`, "info");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("memory-curator-manager-enable", {
+		description: "Enable the singleton Local Curator Manager service",
+		handler: async (args, ctx) => {
+			const result = enableCuratorManagerService({ registryPath: defaultRegistryPath(), cliPath: new URL("./src/cli.ts", import.meta.url).pathname, schedule: args.trim() || undefined });
+			ctx.ui.notify(result.message, result.ok ? "info" : "error");
+		},
+	});
+
+	pi.registerCommand("memory-curator-manager-disable", {
+		description: "Disable the singleton Local Curator Manager service",
+		handler: async (_args, ctx) => {
+			const result = disableCuratorManagerService({ registryPath: defaultRegistryPath(), cliPath: new URL("./src/cli.ts", import.meta.url).pathname });
+			ctx.ui.notify(result.message, result.ok ? "info" : "error");
+		},
+	});
+
+	pi.registerCommand("memory-curator-manager-status", {
+		description: "Show the singleton Local Curator Manager service status",
+		handler: async (_args, ctx) => {
+			const result = getCuratorManagerServiceStatus({ registryPath: defaultRegistryPath(), cliPath: new URL("./src/cli.ts", import.meta.url).pathname });
+			ctx.ui.notify(result.message, result.ok ? "info" : "error");
+		},
+	});
+
+	pi.registerCommand("memory-skill", {
+		description: "List, enable, or disable current-agent memory-managed skills",
+		handler: async (args, ctx) => {
+			try {
+				const [command, value, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+				if (!command || command === "list") {
+					ctx.ui.notify(formatSkillList(listMemorySkills(process.env)), "info");
+					return;
+				}
+				if (command === "enable") {
+					if (!value) throw new Error("Usage: /memory-skill enable <draft:slug|generated:id> [--force]");
+					const result = enableMemorySkill(value, { force: rest.includes("--force"), env: process.env });
+					ctx.ui.notify(`Enabled skill ${result.enabled.name}: ${result.path}`, "info");
+					return;
+				}
+				if (command === "disable") {
+					if (!value) throw new Error("Usage: /memory-skill disable <id-or-name>");
+					const result = disableMemorySkill(value, process.env);
+					ctx.ui.notify(`Disabled skill ${result.id}: ${result.path}`, "info");
+					return;
+				}
+				throw new Error("Usage: /memory-skill [list|enable|disable]");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("memory-sync-upload", {
+		description: "Upload governed memory candidates, profiles, and feedback to Multica",
+		handler: async (_args, ctx) => {
+			try {
+				const result = await syncUpload();
+				ctx.ui.notify(result.skipped || `Uploaded ${result.candidates} candidate(s), ${result.profiles} profile file(s), ${result.feedback} feedback event(s).`, "info");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("memory-sync-pull", {
+		description: "Pull current-agent Multica memory/skill deliveries into local cache",
+		handler: async (args, ctx) => {
+			try {
+				const limit = Number.parseInt(args.trim() || "20", 10);
+				const result = await syncPull(process.env, Number.isFinite(limit) ? limit : 20);
+				ctx.ui.notify(result.skipped || `Pulled ${result.received} delivery(s), rejected ${result.rejected}.`, "info");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("memory-review", {
+		description: "List, show, approve, reject, or archive pending memory/skill review proposals",
+		handler: async (args, ctx) => {
+			try {
+				const tokens = args.trim().split(/\s+/).filter(Boolean);
+				const command = tokens[0];
+				const store = new FileMemoryStore(MEMORY_DIR);
+				if (command === "approve") {
+					const id = tokens[1];
+					if (!id) throw new Error("Usage: /memory-review approve <id>");
+					try {
+						const memoryResult = await approveMemoryPromotion(store, id);
+						snapshotDirty = true;
+						await ensureQmdAvailableForUpdate();
+						scheduleQmdUpdate();
+						ctx.ui.notify(`Approved ${memoryResult.proposalId}. Wrote ${memoryResult.target}.`, "info");
+						return;
+					} catch {
+						const skillResult = await approveSkillDraft(store, id);
+						snapshotDirty = true;
+						await ensureQmdAvailableForUpdate();
+						scheduleQmdUpdate();
+						ctx.ui.notify(`Approved ${skillResult.proposalId}. Created disabled skill draft: ${skillResult.path}`, "info");
+						return;
+					}
+				}
+				if (command === "reject" || command === "archive") {
+					const id = tokens[1];
+					if (!id) throw new Error(`Usage: /memory-review ${command} <id>`);
+					await rejectReviewItem(store, id, command === "archive" ? "archived" : "rejected");
+					snapshotDirty = true;
+					await ensureQmdAvailableForUpdate();
+					scheduleQmdUpdate();
+					ctx.ui.notify(`Marked ${id} as ${command === "archive" ? "archived" : "rejected"}.`, "info");
+					return;
+				}
+				if (command === "compact") {
+					const reviewText = readFileSafe(REVIEW_FILE) ?? "";
+					const compacted = compactProcessedReviewEntries(reviewText, { compactDays: Number.parseInt(process.env.PI_MEMORY_REVIEW_COMPACT_DAYS || "30", 10) });
+					if (compacted.removed > 0) {
+						fs.writeFileSync(REVIEW_FILE, compacted.activeEntries.join(ENTRY_DELIMITER), "utf-8");
+					markDirtyBestEffort();
+						fs.mkdirSync(path.join(MEMORY_DIR, "audit"), { recursive: true });
+						fs.appendFileSync(path.join(MEMORY_DIR, "audit", "curator.jsonl"), `${JSON.stringify({ timestamp: new Date().toISOString(), action: "review_compact", removed: compacted.removed })}\n`, "utf-8");
+					}
+					ctx.ui.notify(`Compacted REVIEW.md: removed ${compacted.removed} processed item(s).`, "info");
+					return;
+				}
+				if (command === "show") {
+					const id = tokens[1];
+					if (!id) throw new Error("Usage: /memory-review show <id>");
+					const entry = (await store.readEntries("review")).find((candidate) => parseStructuredEntry(candidate).metadata.id === id);
+					ctx.ui.notify(entry || `No review entry found for id '${id}'.`, entry ? "info" : "error");
+					return;
+				}
+				const typeFlagIndex = tokens.indexOf("--type");
+				const type = typeFlagIndex >= 0 ? tokens[typeFlagIndex + 1] : undefined;
+				const limitFlagIndex = tokens.indexOf("--limit");
+				const limit = limitFlagIndex >= 0 ? Number.parseInt(tokens[limitFlagIndex + 1] || "20", 10) : 20;
+				const reviewText = readFileSafe(REVIEW_FILE) ?? "";
+				const counts = countPendingReviewItems(reviewText);
+				const items = listPendingReviewItems(reviewText, {
+					type: type === "memory" || type === "skill" ? type : undefined,
+					limit: Number.isFinite(limit) ? limit : 20,
+				});
+				ctx.ui.notify(formatPendingReviewList(items, counts), "info");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
 	// --- memory_search tool ---
 	pi.registerTool({
 		name: "memory_search",
@@ -2278,7 +2803,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			let hasCollection = await checkCollection("pi-memory");
+			let hasCollection = await checkCollection(qmdCollectionName());
 			if (!hasCollection) {
 				const created = await setupQmdCollection();
 				if (created) {
