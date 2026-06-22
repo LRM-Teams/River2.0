@@ -214,9 +214,10 @@ Autogoal is provided by `autogoal.ts`.
 Goal mode is provided by `goal-mode.ts`.
 
 - Start with `/goal <objective>`.
-- It injects hidden goal context, enables the `goal` tool, and auto-continues until the objective is complete, paused, dropped, blocked, or interrupted.
+- It injects hidden goal context, enables the `goal` tool, and auto-continues until the objective is complete, paused, dropped, budget-limited, or interrupted.
+- It tracks assistant token usage and elapsed time, supports `/goal budget <tokens|off>`, and treats budget exhaustion as not completion.
 - The agent must verify current files/checks before calling `goal({ op: "complete" })`.
-- Useful commands: `/goal show`, `/goal pause`, `/goal resume`, `/goal drop`, `/goal auto on`, `/goal auto off`.
+- Useful commands: `/goal show`, `/goal pause`, `/goal resume`, `/goal drop`, `/goal budget <tokens|off>`, `/goal auto on`, `/goal auto off`.
 
 ## Pet Companion
 

@@ -137,7 +137,7 @@ These workflows are prompt-template workflows only. They do not merge read behav
 
 ## Goal Mode
 
-Use `/goal <objective>` to keep Pi working on one task until it is verified complete. Goal mode injects hidden task context, enables a `goal` tool for completion/drop/resume, and auto-continues between turns instead of stopping at a minimal implementation.
+Use `/goal <objective>` to keep Pi working on one task until it is verified complete. Goal mode injects hidden task context, enables a `goal` tool for pause/drop/resume/completion, tracks token/time budget usage, and auto-continues between turns instead of stopping at a minimal implementation.
 
 Useful commands:
 
@@ -147,6 +147,7 @@ Useful commands:
 /goal pause
 /goal resume
 /goal drop
+/goal budget <tokens|off>
 /goal auto on
 /goal auto off
 ```
