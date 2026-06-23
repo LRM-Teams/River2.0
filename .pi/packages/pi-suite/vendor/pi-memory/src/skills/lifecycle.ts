@@ -61,7 +61,7 @@ export function enableMemorySkill(input: string, options: { force?: boolean; env
 	if (existsSync(targetPath) && !options.force) throw new Error(`enabled skill '${source.name}' already exists; pass force to replace it`);
 	if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true });
 	mkdirSync(targetDir, { recursive: true });
-	writeFileSync(targetPath, readFileSync(source.path, "utf-8"), "utf-8");
+	copySkillDirectory(dirname(source.path), targetDir);
 	const manifest = {
 		name: source.name,
 		description: source.description,
@@ -164,6 +164,22 @@ function readSkillItem(skillPath: string, kind: SkillLifecycleKind, id = basenam
 		source: manifest?.source,
 		enabledAt: manifest?.enabledAt,
 	};
+}
+
+function copySkillDirectory(sourceDir: string, targetDir: string): void {
+	for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+		if (entry.isSymbolicLink() || entry.name === ENABLED_MANIFEST) continue;
+		const sourcePath = join(sourceDir, entry.name);
+		const targetPath = join(targetDir, entry.name);
+		if (entry.isDirectory()) {
+			mkdirSync(targetPath, { recursive: true });
+			copySkillDirectory(sourcePath, targetPath);
+			continue;
+		}
+		if (!entry.isFile()) continue;
+		mkdirSync(dirname(targetPath), { recursive: true });
+		writeFileSync(targetPath, readFileSync(sourcePath));
+	}
 }
 
 function parseSkillFrontmatter(content: string): SkillFrontmatter | null {

@@ -40,8 +40,9 @@ Memory files include:
 - `.curator-state.json`: last curator run state.
 - `.curator-service.json`: external curator service state.
 - `audit/curator.jsonl`: curator audit trail.
-- Resolved skill draft root `<slug>/SKILL.md`: disabled skill drafts created after explicit approval.
+- Resolved skill draft root `<slug>/SKILL.md`: disabled skill drafts created after explicit approval; skill directories may include supporting files alongside `SKILL.md`.
 - Multica agent roots also contain `inbox/`, `shared-cache/`, `skills/generated/`, `profile/`, `feedback/feedback.jsonl`, and `sync_queue/`.
+- Skill share candidates are runnable bundles: `sync_queue/skill-candidates.jsonl` is the queue/manifest, while `sync_queue/skill-candidates/<local_unit_id>/` contains `SKILL.md` plus supporting files.
 
 Memory tools:
 
@@ -55,7 +56,7 @@ Memory tools:
 - `memory_learning_reject`: reject or archive a review candidate/proposal without deleting it.
 - `memory_skill_drafts`: list proposed skill drafts.
 - `memory_skill_list`: list current-agent draft, generated, and enabled memory-managed skills.
-- `memory_skill_enable`: explicitly enable a `draft:<slug>` or `generated:<id>` skill by copying it into `skills/enabled/<skill-name>/` and auditing the action.
+- `memory_skill_enable`: explicitly enable a `draft:<slug>` or `generated:<id>` skill by copying the full skill directory into `skills/enabled/<skill-name>/` and auditing the action.
 - `memory_skill_disable`: remove an enabled skill copy while preserving its draft/generated source.
 - `/memory-skill`: slash command to list/enable/disable current-agent memory-managed skills.
 - `/memory-review`: slash command to list/show/approve/reject/archive pending memory and skill proposals in the current resolved root.
@@ -91,10 +92,11 @@ Curator and learning behavior:
 - `memory_curate` scans yesterday's daily log once per content hash into review candidates, then curator lifecycle and proposal rules process those candidates.
 - Repeated candidates can become proposed memory promotions or proposed disabled skill drafts after `memory_curate`.
 - Approval is explicit by default: memory proposals write to memory stores; skill proposals write disabled drafts under the resolved skill draft root.
-- Draft and generated skills stay disabled until `memory_skill_enable` copies them into `skills/enabled`; enabled skills are injected as `<available_skills>` metadata for the current agent.
+- Draft and generated skills stay disabled until `memory_skill_enable` copies their full directories into `skills/enabled`; enabled skills are injected as `<available_skills>` metadata for the current agent.
 - Pi session start can show one pending-review hint; disable with `PI_MEMORY_REVIEW_STARTUP_HINT=0`.
 - Local multi-agent self-evolution supports one Local Curator Manager registry/dirty-root API for many agent roots, plus a manager service that runs `manager-scan` every 6 hours and exits quickly when no root is dirty.
 - The local loop also covers share candidate queue, profile generation, sync upload/pull, downflow receive cache, generated skills, enabled skill lifecycle, and feedback JSONL helpers.
+- Skill upload/downflow follows Multica's runnable bundle shape: `content` is `SKILL.md`, `files` are supporting files, and `content_hash` covers both.
 - Server downflow is per-Agent delivery, not broadcast; local receive writes only `inbox/`, `shared-cache/`, or `skills/generated/` and never overwrites formal memory or auto-enables skills.
 - The curator avoids semantic auto-delete/merge; ambiguous learning stays in review first.
 

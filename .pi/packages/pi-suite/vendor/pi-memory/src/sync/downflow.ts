@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { resolveAgentRoots, type PiAgentEnv } from "../paths/resolve-roots.ts";
 import { detectSensitivity } from "./sensitivity.ts";
 import type { Delivery } from "./schemas.ts";
+import { validateSkillBundleFiles, writeSkillBundle } from "./skill-bundle.ts";
 
 export type ReceiveDeliveryResult = {
 	written: string[];
@@ -29,10 +30,10 @@ export function receiveDelivery(delivery: Delivery, env: PiAgentEnv = process.en
 	mkdirSync(inboxDir, { recursive: true });
 	mkdirSync(generatedDir, { recursive: true });
 	const skillContent = delivery.content.endsWith("\n") ? delivery.content : `${delivery.content}\n`;
-	writeTextIfChanged(join(inboxDir, "SKILL.md"), skillContent);
-	writeTextIfChanged(join(generatedDir, "SKILL.md"), skillContent);
+	const files = validateSkillBundleFiles(delivery.files || []);
+	written.push(...writeSkillBundle(inboxDir, skillContent, files));
+	written.push(...writeSkillBundle(generatedDir, skillContent, files));
 	writeJsonIfChanged(join(inboxDir, "delivery.json"), delivery);
-	written.push(join(inboxDir, "SKILL.md"), join(generatedDir, "SKILL.md"));
 	return { written, accepted: true };
 }
 

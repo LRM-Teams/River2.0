@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -48,6 +48,33 @@ test("sync queue writes share candidates and blocks secret-like payloads", () =>
 	}, env), /secret-like content/);
 });
 
+test("skill candidates upload a runnable bundle with supporting files", () => {
+	const { agentRoot, env } = agentEnv();
+	const skillDir = join(agentRoot, "skills", "drafts", "bundle-demo");
+	mkdirSync(join(skillDir, "scripts"), { recursive: true });
+	writeFileSync(join(skillDir, "SKILL.md"), "---\nname: bundle-demo\ndescription: Use bundle demo.\n---\n# Bundle Demo\n", "utf-8");
+	writeFileSync(join(skillDir, "scripts", "run.sh"), "echo bundle\n", "utf-8");
+
+	const result = appendEvolutionCandidate({
+		type: "skill",
+		content: "fallback should be replaced by SKILL.md",
+		source_path: skillDir,
+		tags: ["coding"],
+		source: "local_curator",
+		suggested_scope: "agent_type",
+		status: "candidate",
+	}, env);
+
+	assert.equal(result.appended, true);
+	assert.equal(result.candidate.name, "bundle-demo");
+	assert.equal(result.candidate.files?.[0]?.path, "scripts/run.sh");
+	assert.match(result.candidate.content, /# Bundle Demo/);
+	assert.equal(existsSync(join(agentRoot, "sync_queue", "skill-candidates", result.candidate.local_unit_id, "SKILL.md")), true);
+	assert.equal(existsSync(join(agentRoot, "sync_queue", "skill-candidates", result.candidate.local_unit_id, "scripts", "run.sh")), true);
+	const queue = readFileSync(join(agentRoot, "sync_queue", "skill-candidates.jsonl"), "utf-8");
+	assert.match(queue, /"files":\[\{"path":"scripts\/run.sh"/);
+});
+
 test("downflow receive writes only inbox/cache/generated locations", () => {
 	const { agentRoot, env } = agentEnv();
 	const memoryResult = receiveDelivery({
@@ -67,10 +94,13 @@ test("downflow receive writes only inbox/cache/generated locations", () => {
 		shared_unit_id: "unit_skill_1",
 		unit_type: "skill",
 		content: "---\nname: shared-demo\ndescription: Use for tests.\n---\n# Shared Demo\n",
+		files: [{ path: "scripts/run.sh", content: "echo shared\n" }],
 	}, env);
 	assert.equal(skillResult.accepted, true);
 	assert.equal(existsSync(join(agentRoot, "inbox", "skills", "unit_skill_1", "SKILL.md")), true);
+	assert.equal(existsSync(join(agentRoot, "inbox", "skills", "unit_skill_1", "scripts", "run.sh")), true);
 	assert.equal(existsSync(join(agentRoot, "skills", "generated", "unit_skill_1", "SKILL.md")), true);
+	assert.equal(existsSync(join(agentRoot, "skills", "generated", "unit_skill_1", "scripts", "run.sh")), true);
 	assert.equal(existsSync(join(agentRoot, "skills", "enabled", "unit_skill_1", "SKILL.md")), false);
 });
 

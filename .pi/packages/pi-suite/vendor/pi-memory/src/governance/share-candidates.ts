@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parseEntry } from "../curator-core/metadata.ts";
 import type { MemoryStore } from "../curator-store/types.ts";
 import type { PiAgentEnv } from "../paths/resolve-roots.ts";
@@ -23,9 +25,17 @@ export async function generateShareCandidatesFromReview(memoryStore: MemoryStore
 		}
 		try {
 			const type = parsed.metadata.kind === "skill_promotion" || parsed.metadata.target_hints?.includes("skill") ? "skill" : "memory";
+			const sourcePath = type === "skill" ? sourceSkillDir(parsed.metadata.promotes_to) : undefined;
+			if (type === "skill" && !sourcePath) {
+				result.skipped += 1;
+				continue;
+			}
 			const appended = appendEvolutionCandidate({
 				type,
 				content,
+				name: parsed.metadata.name,
+				description: parsed.metadata.description,
+				source_path: sourcePath,
 				tags: tagsFromEntry(parsed.metadata.tags || parsed.metadata.kind || "memory"),
 				source: "local_curator",
 				suggested_scope: suggestedScope(parsed.metadata.scope),
@@ -64,6 +74,12 @@ function extractShareableContent(body: string): string {
 
 function tagsFromEntry(value: string): string[] {
 	return value.split(/[ ,#]+/).map((tag) => tag.trim()).filter(Boolean).slice(0, 8);
+}
+
+function sourceSkillDir(promotesTo: string | undefined): string | undefined {
+	if (!promotesTo || !promotesTo.replace(/\\/g, "/").endsWith("/SKILL.md")) return undefined;
+	const dir = dirname(promotesTo);
+	return existsSync(join(dir, "SKILL.md")) ? dir : undefined;
 }
 
 function suggestedScope(value: string | undefined): "agent" | "workspace" | "project" | "team" | "global" | "agent_type" {

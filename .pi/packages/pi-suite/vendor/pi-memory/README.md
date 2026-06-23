@@ -59,6 +59,8 @@ The extension auto-creates the `pi-memory` qmd collection and path contexts on s
   profile/user-profile.md agent-profile.md task-profile.md capability-profile.md
   feedback/feedback.jsonl
   sync_queue/memory-candidates.jsonl skill-candidates.jsonl
+  sync_queue/skill-candidates/<local_unit_id>/SKILL.md   # Runnable upload bundle
+  sync_queue/skill-candidates/<local_unit_id>/**         # Supporting files
 ```
 
 Structured entries are separated by `§` and may start with metadata:
@@ -190,7 +192,7 @@ Approval is explicit by default:
 - `memory_learning_approve` on a memory proposal writes `MEMORY.md`, `USER.md`, or `STATE.md` depending on the proposal target.
 - `memory_learning_approve` on a skill proposal writes the current resolved skill draft root and marks the proposal approved.
 - Skill drafts are disabled. They are not moved into enabled skill directories automatically.
-- `memory_skill_enable` explicitly copies a `draft:<slug>` or `generated:<id>` skill into `skills/enabled/<skill-name>/` and writes `memory/audit/skill-lifecycle.jsonl`.
+- `memory_skill_enable` explicitly copies a full `draft:<slug>` or `generated:<id>` skill directory into `skills/enabled/<skill-name>/` and writes `memory/audit/skill-lifecycle.jsonl`.
 - `memory_skill_disable` removes only the enabled copy; the draft/generated source remains for later review.
 - Enabled skills are injected as available-skill metadata so the agent can read the corresponding `SKILL.md` when the task matches.
 - `memory_learning_reject` marks a candidate or proposal as `rejected` or `archived` without deleting it.
@@ -214,11 +216,11 @@ The package includes local primitives for the full local loop:
 
 - `ensureAgentRoot()` initializes the scoped directory tree.
 - `markCurrentRootDirty()` and `scanDirtyRoots()` implement a single Local Curator Manager registry, manager-level locking, stale lock cleanup, and per-root `.curator.lock` processing.
-- `generateShareCandidatesFromReview()` and `appendEvolutionCandidate()` write governed share candidates to `sync_queue/` and block secret-like payloads.
+- `generateShareCandidatesFromReview()` and `appendEvolutionCandidate()` write governed share candidates to `sync_queue/` and block secret-like payloads. Skill candidates follow Multica's runnable bundle shape: JSONL contains queue metadata plus `content` as `SKILL.md` and `files` as supporting files, while `sync_queue/skill-candidates/<local_unit_id>/` stores the same runnable directory for inspection/upload.
 - `generateProfiles()` writes conservative local profiles for remote matching input.
 - `syncUpload()` / `memory_sync_upload` POST candidates, profiles, and feedback, using a checkpoint to avoid re-uploading prior candidate ids or feedback lines.
 - `syncPull()` / `memory_sync_pull` pull only current-agent deliveries and call `receiveDelivery()`.
-- `receiveDelivery()` writes server downflow only to `inbox/`, `shared-cache/`, or `skills/generated/`; it never overwrites formal memory or enables skills.
+- `receiveDelivery()` writes server downflow only to `inbox/`, `shared-cache/`, or `skills/generated/`; skill deliveries restore `SKILL.md` plus supporting `files`, but never overwrite formal memory or enable skills.
 - `appendFeedbackEvent()` / `memory_feedback` writes injected/used/ignored/success/failure/conflict events to `feedback/feedback.jsonl` for connector upload.
 
 Server delivery is per-agent matching, not broadcast. The local runtime must only pull deliveries for the current `MULTICA_AGENT_ID` and still filter before injection.
