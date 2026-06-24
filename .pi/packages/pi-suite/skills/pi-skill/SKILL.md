@@ -221,6 +221,16 @@ Goal mode is provided by `goal-mode.ts`.
 - The agent must verify current files/checks before calling `goal({ op: "complete" })`.
 - Useful commands: `/goal show`, `/goal pause`, `/goal resume`, `/goal drop`, `/goal budget <tokens|off>`, `/goal auto on`, `/goal auto off`.
 
+## Update Plan
+
+`update-plan.ts` provides a lightweight Codex-style execution checklist without changing Pi core.
+
+- Tool: `update_plan`.
+- Use it for non-trivial tasks with 3+ distinct steps, user-provided checklists, or explicit plan/progress tracking requests.
+- Operations: `list`, `init`, `start`, `done`, `drop`, `rm`, `append`, and `note`.
+- It keeps phased task state in session history, auto-promotes the next pending task to `in_progress`, and shows widget/footer progress when active.
+- Commands: `/plan-status` shows the current plan; `/plan-clear` clears it.
+
 ## Pet Companion
 
 The pet extension provides a small terminal companion and durable profile.
@@ -233,6 +243,7 @@ The pet extension provides a small terminal companion and durable profile.
 
 ## UI And Utility Extensions
 
+- `update-plan.ts`: registers `update_plan`, `/plan-status`, and `/plan-clear` for visible per-session execution planning.
 - `prompt-url-widget.ts`: detects PR/issue prompt templates, fetches GitHub metadata with `gh`, shows a widget, and names the session when possible.
 - `snake.ts`: `/snake` opens a TUI snake game; `Esc` pauses/saves, `q` quits, arrows/WASD move.
 - `tps.ts`: after each assistant run, shows tokens-per-second and token usage details.

@@ -15,12 +15,12 @@ pi install npm:pi-web-access
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.17.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.20.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
 
-- Local extensions: autogoal, goal mode, pet, prompt URL widget, snake, TPS notifications.
+- Local extensions: autogoal, goal mode, update_plan, pet, prompt URL widget, snake, TPS notifications.
 - Prompts: changelog audit, issue analysis, PR review, review workflow, commit workflow, wrap workflow.
 - Skills: provider checklist, Pi capability reference, image-to-editable-PPT workflow.
 - Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, memory/skill-draft versioning, scoped Multica agent roots, review reminders, and local memory/skill self-evolution queues.
@@ -74,6 +74,17 @@ Behavior:
 - Completion requires current-state evidence: changed files read after edits and a passing validation command.
 - Subagents are optional and budgeted; worker subagents must use worktree isolation.
 - Run artifacts are written under `~/.pi/agent/workflow-runs/autogoal-<run-id>/`.
+
+## Update Plan
+
+The `update_plan` tool gives Pi a Codex-style visible execution checklist for non-trivial tasks. It supports `init`, `start`, `done`, `drop`, `rm`, `append`, and `note`, shows active plan progress in the UI, and injects guidance to use it for 3+ step tasks or user-provided checklists.
+
+Useful commands:
+
+```bash
+/plan-status
+/plan-clear
+```
 
 ## Team Model Setup
 
