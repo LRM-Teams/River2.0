@@ -161,7 +161,7 @@ The curator deliberately avoids semantic auto-delete or semantic auto-merge in t
 
 ## Review-First Learning
 
-Session shutdown may extract conservative learning candidates from the recent conversation text. Candidates are written only to `REVIEW.md`; they are not injected as normal context, not written to long-term memory, and not enabled as skills.
+Session shutdown may extract conservative learning candidates from the recent conversation text, and `/new` or `/fork` transitions run a lightweight structured-evidence pass. Candidates are written only to `REVIEW.md`; they are not injected as normal context, not written to long-term memory, and not enabled as skills.
 
 Candidate examples:
 
@@ -182,7 +182,7 @@ When candidates repeat, pi-memory updates the existing candidate instead of appe
 `memory_curate` can turn stable candidates into proposals:
 
 - `kind:memory_promotion status:proposed` for durable preferences, project facts, or concise lessons.
-- `kind:skill_promotion status:proposed` for repeated skill-worthy methods.
+- `kind:skill_promotion status:proposed` for repeated or high-confidence skill-worthy methods.
 
 Approval is explicit by default:
 
@@ -191,7 +191,7 @@ Approval is explicit by default:
 - `/memory-review` lists pending proposals and supports `show <id>`, `approve <id>`, `reject <id>`, and `archive <id>` for the current resolved root.
 - `memory_learning_approve` on a memory proposal writes `MEMORY.md`, `USER.md`, or `STATE.md` depending on the proposal target.
 - `memory_learning_approve` on a skill proposal writes the current resolved skill draft root and marks the proposal approved.
-- Skill drafts are disabled. They are not moved into enabled skill directories automatically.
+- Skill drafts are disabled. In the default `PI_MEMORY_SKILL_DRAFTS=auto-draft` mode, high-quality proposals are written to the draft root automatically, but they are not moved into enabled skill directories.
 - `memory_skill_enable` explicitly copies a full `draft:<slug>` or `generated:<id>` skill directory into `skills/enabled/<skill-name>/` and writes `memory/audit/skill-lifecycle.jsonl`.
 - `memory_skill_disable` removes only the enabled copy; the draft/generated source remains for later review.
 - Enabled skills are injected as available-skill metadata so the agent can read the corresponding `SKILL.md` when the task matches.
@@ -199,7 +199,7 @@ Approval is explicit by default:
 
 Old candidates are lifecycle-managed without deletion. Low-confidence candidates can become `archived`; others become `needs_review` first. `REVIEW.md` remains the evidence and audit trail, so approved items are marked rather than removed.
 
-Current learning extraction is text-based: it reads user/assistant conversation messages and asks the active model for structured candidates. It does not yet inspect structured tool-call graphs directly. Curator patch audit remains in `audit/curator.jsonl`; learning approvals are tracked through `REVIEW.md` proposal metadata and status changes.
+Learning extraction combines text-based model extraction with a lightweight structured tool-evidence pass. The structured pass looks for `failure -> edit/action -> validation success` patterns and emits high-confidence skill candidates. Curator patch audit remains in `audit/curator.jsonl`; learning approvals are tracked through `REVIEW.md` proposal metadata and status changes.
 
 ## Local Multi-Agent Self-Evolution
 
@@ -224,6 +224,10 @@ The package includes local primitives for the full local loop:
 - `appendFeedbackEvent()` / `memory_feedback` writes injected/used/ignored/success/failure/conflict events to `feedback/feedback.jsonl` for connector upload.
 
 Server delivery is per-agent matching, not broadcast. The local runtime must only pull deliveries for the current `MULTICA_AGENT_ID` and still filter before injection.
+
+Local CLI Pi agents can participate in the same Multica loop as hosted/wrapped agents. Bind the local run to a Multica identity by setting `MULTICA_WORKSPACE_ID`, `MULTICA_AGENT_ID`, `PI_MEMORY_REMOTE_URL`, and `PI_MEMORY_REMOTE_TOKEN` before launching pi. Optionally set `PI_AGENT_ROOT` to choose the exact local agent root; otherwise the package derives `~/multica_workspaces/<workspace_id>/.pi/agents/<agent_id>/`. With that identity, local Pi can manually call `memory_sync_pull` / `memory_sync_upload`, or enable the env-gated automatic fallback below.
+
+Automatic sync is off by default. Set `PI_MEMORY_AUTO_SYNC_PULL_ON_START=1` (or `PI_MEMORY_AUTO_SYNC_PULL=1`) to pull current-agent deliveries during `session_start`. Set `PI_MEMORY_AUTO_SYNC_UPLOAD_ON_SHUTDOWN=1` (or `PI_MEMORY_AUTO_SYNC_UPLOAD=1`) to upload candidates, profiles, and feedback during `session_shutdown`. `PI_MEMORY_AUTO_SYNC=1` enables both. These best-effort hooks never block startup/shutdown on sync errors.
 
 ### Local Curator Manager Service
 
@@ -284,9 +288,16 @@ The controller uses a systemd user timer when available and falls back to cron. 
 | `PI_MEMORY_SUMMARIZE_TRANSITIONS` | `1`, `true`, `yes`, `on` | unset | Also summarize lifecycle transitions |
 | `PI_MEMORY_LEARNING` | `off`, `review`, `auto-review` | `review` | Control session learning candidate extraction |
 | `PI_MEMORY_LEARNING_MIN_CONFIDENCE` | `low`, `medium`, `high` | `medium` | Minimum extractor confidence to keep |
-| `PI_MEMORY_SKILL_DRAFTS` | `off`, `review` | `review` | Allow curator to propose disabled skill drafts |
+| `PI_MEMORY_SKILL_DRAFTS` | `off`, `propose`/`review`, `auto-draft` | `auto-draft` | Control disabled skill draft creation; `propose` only writes proposals, `auto-draft` writes disabled drafts |
+| `PI_MEMORY_SKILL_SEEN_THRESHOLD` | positive integer | `2` | Repeated medium-confidence skill candidate threshold |
 | `PI_MEMORY_AUTO_APPROVE_MEMORY` | `1`, `true`, `yes`, `on` | unset | YOLO mode for approving newly created memory proposals |
 | `PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS` | `1`, `true`, `yes`, `on` | unset | YOLO mode for creating newly proposed disabled skill drafts |
+| `PI_MEMORY_REMOTE_URL` | URL | unset | Multica evolution sync endpoint for upload/pull |
+| `PI_MEMORY_REMOTE_TOKEN` | token | unset | Bearer token for Multica evolution sync |
+| `PI_MEMORY_AUTO_SYNC` | `1`, `true`, `yes`, `on` | unset | Enable best-effort pull on start and upload on shutdown |
+| `PI_MEMORY_AUTO_SYNC_PULL` / `PI_MEMORY_AUTO_SYNC_PULL_ON_START` | `1`, `true`, `yes`, `on` | unset | Best-effort `syncPull()` during session start |
+| `PI_MEMORY_AUTO_SYNC_UPLOAD` / `PI_MEMORY_AUTO_SYNC_UPLOAD_ON_SHUTDOWN` | `1`, `true`, `yes`, `on` | unset | Best-effort `syncUpload()` during session shutdown |
+| `PI_MEMORY_AUTO_SYNC_PULL_LIMIT` | positive integer | `20` | Maximum deliveries for automatic pull |
 
 ## Development
 

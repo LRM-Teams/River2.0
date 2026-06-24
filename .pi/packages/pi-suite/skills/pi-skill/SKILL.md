@@ -88,10 +88,11 @@ Curator and learning behavior:
 - Expired temporary memories go to `REVIEW.md`, not automatic deletion.
 - Quotas reset when `month` or `reset` rolls over.
 - Mutations are audited to `audit/curator.jsonl`.
-- Session shutdown may extract conservative learning candidates into `REVIEW.md`; they are not injected as normal memory and are not auto-enabled.
+- Session shutdown may extract conservative learning candidates into `REVIEW.md`; `/new` and `/fork` also run a lightweight structured-evidence pass.
 - `memory_curate` scans yesterday's daily log once per content hash into review candidates, then curator lifecycle and proposal rules process those candidates.
-- Repeated candidates can become proposed memory promotions or proposed disabled skill drafts after `memory_curate`.
-- Approval is explicit by default: memory proposals write to memory stores; skill proposals write disabled drafts under the resolved skill draft root.
+- Repeated or high-confidence candidates can become proposed memory promotions or proposed disabled skill drafts after `memory_curate`.
+- Skill-worthy `failure -> edit/action -> validation success` patterns become high-confidence skill candidates from structured tool evidence.
+- Skill drafts default to `auto-draft`: high-quality proposals write disabled drafts under the resolved skill draft root, but memory proposals still require approval.
 - Draft and generated skills stay disabled until `memory_skill_enable` copies their full directories into `skills/enabled`; enabled skills are injected as `<available_skills>` metadata for the current agent.
 - Pi session start can show one pending-review hint; disable with `PI_MEMORY_REVIEW_STARTUP_HINT=0`.
 - Local multi-agent self-evolution supports one Local Curator Manager registry/dirty-root API for many agent roots, plus a manager service that runs `manager-scan` every 6 hours and exits quickly when no root is dirty.
@@ -143,12 +144,16 @@ Useful memory environment variables:
 - `PI_MEMORY_NO_SEARCH=1`: disable per-turn search injection.
 - `PI_MEMORY_SUMMARIZE_TRANSITIONS=1`: also summarize lifecycle transitions such as `/reload`.
 - `PI_MEMORY_LEARNING`: `off`, `review`, or `auto-review`.
-- `PI_MEMORY_SKILL_DRAFTS`: `off` or `review`.
+- `PI_MEMORY_SKILL_DRAFTS`: `off`, `propose`/`review`, or `auto-draft` (default).
+- `PI_MEMORY_SKILL_SEEN_THRESHOLD`: repeated medium-confidence skill candidate threshold; default `2`.
 - `PI_MEMORY_AUTO_APPROVE_MEMORY=1`: automatically approve newly created memory proposals.
 - `PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS=1`: automatically create newly proposed disabled skill drafts.
 - `PI_MEMORY_CURATOR_STARTUP_HINT=0`: hide the disabled-curator startup hint.
 - `PI_MEMORY_REVIEW_STARTUP_HINT=0`: hide pending review proposal startup hints.
 - `PI_MEMORY_REMOTE_URL` and `PI_MEMORY_REMOTE_TOKEN`: enable Multica candidate/profile/feedback upload and current-agent delivery pull.
+- Local CLI Pi can bind to Multica by setting `MULTICA_WORKSPACE_ID`, `MULTICA_AGENT_ID`, `PI_MEMORY_REMOTE_URL`, and `PI_MEMORY_REMOTE_TOKEN`; it then uses the same agent root/sync loop as a Multica-wrapped Pi agent.
+- `PI_MEMORY_AUTO_SYNC=1`: best-effort automatic pull on session start and upload on session shutdown; narrower aliases are `PI_MEMORY_AUTO_SYNC_PULL_ON_START=1`, `PI_MEMORY_AUTO_SYNC_PULL=1`, `PI_MEMORY_AUTO_SYNC_UPLOAD_ON_SHUTDOWN=1`, and `PI_MEMORY_AUTO_SYNC_UPLOAD=1`.
+- `PI_MEMORY_AUTO_SYNC_PULL_LIMIT`: maximum automatic delivery pull count; default `20`.
 - `PI_EVOLUTION_ENABLED=0`: disable snapshot + git versioning.
 - `PI_EVOLUTION_DIR`: override evolution repo directory; default `~/.pi/agent/evolution`.
 - `PI_EVOLUTION_REMOTE`: optional personal private Git remote; unset by default.

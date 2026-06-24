@@ -45,6 +45,7 @@ import {
 	REVIEW_CANDIDATE_KINDS,
 	REVIEW_CONFIDENCES,
 	REVIEW_TARGET_HINTS,
+	parseReviewCandidate,
 	upsertReviewCandidate,
 	type ReviewCandidateInput,
 } from "./src/learning/candidates.ts";
@@ -53,7 +54,7 @@ import { generateShareCandidatesFromReview } from "./src/governance/share-candid
 import { compactProcessedReviewEntries } from "./src/learning/review-compact.ts";
 import { countPendingReviewItems, formatPendingReviewList, formatPendingReviewSummary, listPendingReviewItems } from "./src/learning/review-summary.ts";
 import { defaultRegistryPath, markCurrentRootDirty, scanDirtyRoots } from "./src/manager/local-curator-manager.ts";
-import { approveSkillDraft, listSkillDraftProposals, proposeSkillDrafts } from "./src/learning/skills.ts";
+import { approvePendingSkillDrafts, approveSkillDraft, listSkillDraftProposals, proposeSkillDrafts } from "./src/learning/skills.ts";
 import { disableMemorySkill, enableMemorySkill, formatEnabledSkillsForPrompt, formatSkillList, listMemorySkills } from "./src/skills/lifecycle.ts";
 import { generateProfiles } from "./src/profile/generator.ts";
 import { syncPull, syncUpload } from "./src/sync/connector.ts";
@@ -585,8 +586,16 @@ export function getMemoryLearningMode(env: MemoryEnv = process.env): "off" | "re
 	return value === "off" || value === "auto-review" ? value : "review";
 }
 
-export function getMemorySkillDraftsMode(env: MemoryEnv = process.env): "off" | "review" {
-	return env.PI_MEMORY_SKILL_DRAFTS?.toLowerCase() === "off" ? "off" : "review";
+export function getMemorySkillDraftsMode(env: MemoryEnv = process.env): "off" | "propose" | "auto-draft" {
+	const value = (env.PI_MEMORY_SKILL_DRAFTS || "auto-draft").toLowerCase();
+	if (value === "off") return "off";
+	if (value === "propose" || value === "review") return "propose";
+	return "auto-draft";
+}
+
+function getMemorySkillSeenThreshold(env: MemoryEnv = process.env): number {
+	const value = Number.parseInt(env.PI_MEMORY_SKILL_SEEN_THRESHOLD || "2", 10);
+	return Number.isFinite(value) && value > 0 ? value : 2;
 }
 
 function getMemoryLearningMinConfidence(env: MemoryEnv = process.env): "low" | "medium" | "high" {
@@ -602,6 +611,51 @@ function getMemoryAutoApproveSkillDrafts(env: MemoryEnv = process.env): boolean 
 	return ["1", "true", "yes", "on"].includes((env.PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS || "").toLowerCase());
 }
 
+function envFlag(env: MemoryEnv, name: string): boolean | undefined {
+	const value = env[name]?.trim().toLowerCase();
+	if (!value) return undefined;
+	if (["1", "true", "yes", "on"].includes(value)) return true;
+	if (["0", "false", "no", "off"].includes(value)) return false;
+	return undefined;
+}
+
+export function getMemoryAutoSyncPullOnStart(env: MemoryEnv = process.env): boolean {
+	return envFlag(env, "PI_MEMORY_AUTO_SYNC_PULL_ON_START")
+		?? envFlag(env, "PI_MEMORY_AUTO_SYNC_PULL")
+		?? envFlag(env, "PI_MEMORY_AUTO_SYNC")
+		?? false;
+}
+
+export function getMemoryAutoSyncUploadOnShutdown(env: MemoryEnv = process.env): boolean {
+	return envFlag(env, "PI_MEMORY_AUTO_SYNC_UPLOAD_ON_SHUTDOWN")
+		?? envFlag(env, "PI_MEMORY_AUTO_SYNC_UPLOAD")
+		?? envFlag(env, "PI_MEMORY_AUTO_SYNC")
+		?? false;
+}
+
+function getMemoryAutoSyncPullLimit(env: MemoryEnv = process.env): number {
+	const value = Number.parseInt(env.PI_MEMORY_AUTO_SYNC_PULL_LIMIT || "20", 10);
+	return Number.isFinite(value) && value > 0 ? value : 20;
+}
+
+async function runAutoSyncPullBestEffort(): Promise<void> {
+	if (!getMemoryAutoSyncPullOnStart()) return;
+	try {
+		await syncPull(process.env, getMemoryAutoSyncPullLimit());
+	} catch {
+		// Automatic sync is a Multica/local-agent convenience; never block startup.
+	}
+}
+
+async function runAutoSyncUploadBestEffort(): Promise<void> {
+	if (!getMemoryAutoSyncUploadOnShutdown()) return;
+	try {
+		await syncUpload();
+	} catch {
+		// Automatic sync is a Multica/local-agent convenience; never block shutdown.
+	}
+}
+
 function confidenceRank(confidence: "low" | "medium" | "high"): number {
 	return confidence === "low" ? 0 : confidence === "medium" ? 1 : 2;
 }
@@ -615,6 +669,7 @@ function buildLearningExtractorPrompt(conversationText: string, truncated: boole
 		"Extract zero or more review candidates from this session transcript.",
 		"Return JSON exactly shaped as: {\"candidates\":[{\"kind\":\"bug_fix|skill_candidate|preference|project_fact\",\"confidence\":\"low|medium|high\",\"signature\":\"short stable signature\",\"summary\":\"optional concise summary\",\"targetHints\":[\"memory\",\"skill\"],\"evidence\":\"optional compact evidence\"}]}",
 		"Only include verified bug fixes when a failure was followed by an edit/action and successful validation.",
+		"For skill candidates, prefer reusable methods with clear trigger signals, steps, validation signals, and stop/avoid conditions.",
 		"Drop one-off trivia, transient status, workflow artifacts, and loop artifacts.",
 	];
 	if (truncated) lines.push(`Transcript was truncated to the most recent ${conversationText.length} of ${totalChars} characters.`);
@@ -683,7 +738,7 @@ function serializeSessionConversation(branch: SessionEntry[]): { text: string; h
 	return { text: serializeConversation(convertToLlm(messages)), hasMessages: true };
 }
 
-export function parseLearningExtractorResponse(raw: string): ReviewCandidateInput[] {
+export function parseLearningExtractorResponse(raw: string, source = "session_shutdown"): ReviewCandidateInput[] {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw.trim());
@@ -713,40 +768,194 @@ export function parseLearningExtractorResponse(raw: string): ReviewCandidateInpu
 			summary: typeof record.summary === "string" ? record.summary.trim() : undefined,
 			targetHints,
 			evidence: typeof record.evidence === "string" ? record.evidence.trim() : undefined,
-			source: "session_shutdown",
+			source,
 		});
 	}
 	return candidates;
 }
 
-async function runSessionLearningExtractor(ctx: ExtensionContext): Promise<number> {
+
+type ToolCallInfo = {
+	name: string;
+	arguments?: Record<string, unknown>;
+};
+
+type StructuredFailure = {
+	summary: string;
+	signature: string;
+	toolName: string;
+};
+
+function countReviewCandidates(reviewText: string): { total: number; skill: number } {
+	const entries = reviewText.split(ENTRY_DELIMITER).map((entry) => entry.trim()).filter(Boolean);
+	let total = 0;
+	let skill = 0;
+	for (const entry of entries) {
+		const candidate = parseReviewCandidate(entry);
+		if (!candidate) continue;
+		total += 1;
+		if (candidate.kind === "skill_candidate" || candidate.targetHints.includes("skill")) skill += 1;
+	}
+	return { total, skill };
+}
+
+function collectToolCalls(branch: SessionEntry[]): Map<string, ToolCallInfo> {
+	const calls = new Map<string, ToolCallInfo>();
+	for (const entry of branch) {
+		if (entry.type !== "message") continue;
+		const message = entry.message as Message;
+		if (message.role !== "assistant") continue;
+		for (const part of message.content) {
+			const candidate = part as { type?: string; id?: string; name?: string; arguments?: Record<string, unknown> };
+			if (candidate.type !== "toolCall" || !candidate.id || !candidate.name) continue;
+			calls.set(candidate.id, { name: candidate.name, arguments: candidate.arguments });
+		}
+	}
+	return calls;
+}
+
+function getToolArgumentText(args: Record<string, unknown> | undefined, key: string): string {
+	const value = args?.[key];
+	return typeof value === "string" ? value : "";
+}
+
+function summarizeToolText(text: string): string {
+	const line = text
+		.split("\n")
+		.map((candidate) => candidate.trim())
+		.find((candidate) => candidate && !candidate.startsWith("{"));
+	return previewMessageText(line || text);
+}
+
+function isFailureToolResult(message: Message, text: string): boolean {
+	if (message.role !== "toolResult") return false;
+	if (message.isError) return true;
+	return /\b(Command exited with code [1-9]|failed|failure|error|exception|traceback|diagnostics?:\s*(?!ok)|ERR_[A-Z0-9_]+)\b/i.test(text);
+}
+
+function isEditOrActionTool(toolName: string, args: Record<string, unknown> | undefined): boolean {
+	if (["edit", "write", "memory_write", "memory_edit", "lsp"].includes(toolName)) return true;
+	if (toolName !== "bash") return false;
+	const command = getToolArgumentText(args, "command");
+	return /\b(apply_patch|python3?|node|perl|sed\s+-i|mv\s+|cp\s+|npm\s+install|pnpm\s+|bun\s+|cat\s+>|tee\s+)\b/.test(command);
+}
+
+function isValidationToolSuccess(toolName: string, args: Record<string, unknown> | undefined, text: string): boolean {
+	if (toolName === "lsp") return /diagnostics.*ok|\bOK\b/i.test(text);
+	if (toolName !== "bash") return false;
+	const command = getToolArgumentText(args, "command");
+	return /\b(test|typecheck|lint|check|tsc|build|pytest|go\s+test|cargo\s+test|mvn\s+test|gradle\b|npm\s+run|pnpm\s+(test|run|--filter))\b/i.test(command);
+}
+
+function toolLabel(toolName: string, args: Record<string, unknown> | undefined): string {
+	if (toolName === "bash") return previewMessageText(getToolArgumentText(args, "command")) || "bash";
+	if (toolName === "lsp") return `lsp ${getToolArgumentText(args, "action")}`.trim();
+	return toolName;
+}
+
+export function extractStructuredToolEvidenceCandidates(branch: SessionEntry[], source = "tool_evidence"): ReviewCandidateInput[] {
+	const calls = collectToolCalls(branch);
+	const candidates: ReviewCandidateInput[] = [];
+	const emitted = new Set<string>();
+	let failure: StructuredFailure | null = null;
+	let actionAfterFailure = false;
+	let actionLabel = "";
+
+	for (const entry of branch) {
+		if (entry.type !== "message") continue;
+		const message = entry.message as Message;
+		if (message.role !== "toolResult") continue;
+		const info = calls.get(message.toolCallId);
+		const toolName = message.toolName || info?.name || "tool";
+		const args = info?.arguments;
+		const text = getMessageText(message);
+
+		if (isFailureToolResult(message, text)) {
+			const summary = summarizeToolText(text);
+			failure = {
+				summary,
+				signature: `${toolName} ${summary}`.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 96) || toolName,
+				toolName,
+			};
+			actionAfterFailure = false;
+			actionLabel = "";
+			continue;
+		}
+
+		if (!failure) continue;
+		if (isEditOrActionTool(toolName, args)) {
+			actionAfterFailure = true;
+			actionLabel = toolLabel(toolName, args);
+			continue;
+		}
+		if (!actionAfterFailure || !isValidationToolSuccess(toolName, args, text)) continue;
+
+		const validation = toolLabel(toolName, args);
+		const signature = `fix ${failure.signature} validated by ${validation}`.slice(0, 120);
+		if (!emitted.has(signature)) {
+			emitted.add(signature);
+			candidates.push({
+				kind: "skill_candidate",
+				confidence: "high",
+				signature,
+				summary: `Use a failure -> edit/action -> validation loop: inspect ${failure.toolName} failure, apply ${actionLabel || "the smallest relevant fix"}, then rerun ${validation}.`,
+				targetHints: ["skill"],
+				evidence: `Failure: ${failure.summary}; action: ${actionLabel || "edit/action"}; validation: ${validation}.`,
+				source,
+			});
+		}
+		failure = null;
+		actionAfterFailure = false;
+		actionLabel = "";
+		if (candidates.length >= 3) break;
+	}
+
+	return candidates;
+}
+
+async function writeLearningCandidates(candidates: ReviewCandidateInput[]): Promise<number> {
+	if (candidates.length === 0) return 0;
+	let written = 0;
+	const store = new FileMemoryStore(MEMORY_DIR);
+	for (const candidate of candidates) {
+		const result = await upsertReviewCandidate(store, candidate);
+		if (result.changed) written += 1;
+	}
+	return written;
+}
+
+async function runSessionLearningExtractor(
+	ctx: ExtensionContext,
+	options: { source?: string; includeModel?: boolean; includeStructured?: boolean } = {},
+): Promise<number> {
 	if (getMemoryLearningMode() === "off") return 0;
 	const branch = getSessionBranch(ctx);
-	if (!branch || !ctx.model) return 0;
-	const apiKey = await resolveExitSummaryApiKey(ctx);
-	if (!apiKey) return 0;
-	const conversation = serializeSessionConversation(branch);
-	if (!conversation.hasMessages || !conversation.text.trim()) return 0;
-	const truncated = truncateText(conversation.text.trim(), LEARNING_EXTRACTOR_MAX_CHARS, "end");
-	const messages: Message[] = [{
-		role: "user",
-		content: [{ type: "text", text: buildLearningExtractorPrompt(truncated.text, truncated.truncated, conversation.text.trim().length) }],
-		timestamp: Date.now(),
-	}];
-	try {
-		const response = await complete(ctx.model, { systemPrompt: LEARNING_EXTRACTOR_SYSTEM_PROMPT, messages }, { apiKey, reasoningEffort: "low" });
-		const raw = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
-		const candidates = parseLearningExtractorResponse(raw);
-		let written = 0;
-		const store = new FileMemoryStore(MEMORY_DIR);
-		for (const candidate of candidates) {
-			const result = await upsertReviewCandidate(store, candidate);
-			if (result.changed) written += 1;
-		}
-		return written;
-	} catch {
-		return 0;
+	if (!branch) return 0;
+	const source = options.source || "session_shutdown";
+	const candidates: ReviewCandidateInput[] = [];
+	if (options.includeStructured !== false) {
+		candidates.push(...extractStructuredToolEvidenceCandidates(branch, source));
 	}
+	if (options.includeModel !== false && ctx.model) {
+		const apiKey = await resolveExitSummaryApiKey(ctx);
+		const conversation = serializeSessionConversation(branch);
+		if (apiKey && conversation.hasMessages && conversation.text.trim()) {
+			const truncated = truncateText(conversation.text.trim(), LEARNING_EXTRACTOR_MAX_CHARS, "end");
+			const messages: Message[] = [{
+				role: "user",
+				content: [{ type: "text", text: buildLearningExtractorPrompt(truncated.text, truncated.truncated, conversation.text.trim().length) }],
+				timestamp: Date.now(),
+			}];
+			try {
+				const response = await complete(ctx.model, { systemPrompt: LEARNING_EXTRACTOR_SYSTEM_PROMPT, messages }, { apiKey, reasoningEffort: "low" });
+				const raw = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
+				candidates.push(...parseLearningExtractorResponse(raw, source));
+			} catch {
+				// Learning is best-effort and must not block session transitions.
+			}
+		}
+	}
+	return writeLearningCandidates(candidates);
 }
 
 async function generateExitSummary(ctx: ExtensionContext): Promise<ExitSummaryResult> {
@@ -1560,7 +1769,8 @@ async function runCurator(reason: string): Promise<string> {
 	});
 	const lifecycleResult = await applyReviewLifecycle(store);
 	const memoryResult = await proposeMemoryPromotions(store);
-	const skillResult = getMemorySkillDraftsMode() === "off" ? { created: 0, proposals: [] } : await proposeSkillDrafts(store, { draftsDir: SKILL_DRAFTS_DIR });
+	const skillDraftMode = getMemorySkillDraftsMode();
+	const skillResult = skillDraftMode === "off" ? { created: 0, proposals: [] } : await proposeSkillDrafts(store, { draftsDir: SKILL_DRAFTS_DIR, seenThreshold: getMemorySkillSeenThreshold() });
 	let autoApprovedMemory = 0;
 	let autoApprovedSkills = 0;
 	if (getMemoryAutoApproveMemory()) {
@@ -1569,11 +1779,8 @@ async function runCurator(reason: string): Promise<string> {
 			autoApprovedMemory += 1;
 		}
 	}
-	if (getMemoryAutoApproveSkillDrafts()) {
-		for (const proposal of skillResult.proposals) {
-			await approveSkillDraft(store, proposal.id);
-			autoApprovedSkills += 1;
-		}
+	if (skillDraftMode === "auto-draft" || getMemoryAutoApproveSkillDrafts()) {
+		autoApprovedSkills = (await approvePendingSkillDrafts(store, skillResult.proposals.map((proposal) => proposal.id))).length;
 	}
 	const learningChanges = lifecycleResult.changed + memoryResult.created + skillResult.created + autoApprovedMemory + autoApprovedSkills;
 	if (result.patches.length > 0 || learningChanges > 0) {
@@ -1622,6 +1829,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		refreshResolvedDirsFromEnv();
 		ensureDirs();
+		await runAutoSyncPullBestEffort();
 		exitSummaryReason = null;
 		if (terminalInputUnsubscribe) {
 			terminalInputUnsubscribe();
@@ -1636,9 +1844,13 @@ export default function (pi: ExtensionAPI) {
 				return undefined;
 			});
 			if (process.env.PI_MEMORY_REVIEW_STARTUP_HINT !== "0") {
-				const pending = countPendingReviewItems(readFileSafe(REVIEW_FILE) ?? "");
-				if (pending.total > 0) {
-					ctx.ui.notify(`Memory review: ${pending.memory} memory / ${pending.skill} skill proposals pending. Run /memory-review.`, "info");
+				const reviewText = readFileSafe(REVIEW_FILE) ?? "";
+				const pending = countPendingReviewItems(reviewText);
+				const candidates = countReviewCandidates(reviewText);
+				const skills = listMemorySkills(process.env);
+				const hasWork = pending.total > 0 || candidates.total > 0 || skills.drafts.length > 0 || skills.generated.length > 0 || skills.enabled.length > 0;
+				if (hasWork) {
+					ctx.ui.notify(`Memory review: ${candidates.total} candidate(s) (${candidates.skill} skill), ${pending.memory} memory proposal(s), ${pending.skill} skill proposal(s), ${skills.drafts.length} draft(s), ${skills.generated.length} generated, ${skills.enabled.length} enabled. Run /memory-review or /memory-skill.`, "info");
 				}
 			}
 		}
@@ -1678,8 +1890,11 @@ export default function (pi: ExtensionAPI) {
 			try {
 				if (shouldWriteTransitionHandoffForReason(shutdownReason)) {
 					await writeTransitionHandoff(ctx, shutdownReason);
+					await runSessionLearningExtractor(ctx, { source: `transition_${shutdownReason}`, includeModel: false, includeStructured: true });
+					if (getMemorySkillDraftsMode() === "auto-draft") await runCurator(`transition_${shutdownReason}`);
 				}
 			} finally {
+				await runAutoSyncUploadBestEffort();
 				exitSummaryReason = null;
 				if (updateTimer) {
 					clearTimeout(updateTimer);
@@ -1706,15 +1921,20 @@ export default function (pi: ExtensionAPI) {
 					const separator = existing.trim() ? "\n\n" : "";
 					fs.writeFileSync(filePath, existing + separator + entry, "utf-8");
 					const newCandidates = await runSessionLearningExtractor(ctx);
+					if (getMemorySkillDraftsMode() === "auto-draft") await runCurator("session_learning");
 					if (ctx.hasUI && process.env.PI_MEMORY_REVIEW_SESSION_SUMMARY !== "0") {
-						const pending = countPendingReviewItems(readFileSafe(REVIEW_FILE) ?? "");
-						ctx.ui.notify(`Memory learning today: ${newCandidates} new candidate(s), ${pending.memory} memory proposal(s) pending, ${pending.skill} skill proposal(s) pending.`, "info");
+						const reviewText = readFileSafe(REVIEW_FILE) ?? "";
+						const pending = countPendingReviewItems(reviewText);
+						const candidates = countReviewCandidates(reviewText);
+						const skills = listMemorySkills(process.env);
+						ctx.ui.notify(`Memory learning today: ${newCandidates} new candidate(s), ${candidates.skill} skill candidate(s), ${pending.memory} memory proposal(s), ${pending.skill} skill proposal(s), ${skills.drafts.length} draft(s).`, "info");
 					}
 					await ensureQmdAvailableForUpdate();
 					await runQmdUpdateNow();
 				}
 			}
 		} finally {
+			await runAutoSyncUploadBestEffort();
 			if (updateTimer) {
 				clearTimeout(updateTimer);
 				updateTimer = null;

@@ -44,6 +44,7 @@ export { appendFeedbackEvent, buildFeedbackEvent } from "./sync/feedback.ts";
 export { appendEvolutionCandidate } from "./sync/queue.ts";
 export type { Delivery, EvolutionCandidate, FeedbackEvent, FeedbackEventType, EvolutionUnitType } from "./sync/schemas.ts";
 export {
+	approvePendingSkillDrafts,
 	approveSkillDraft,
 	listSkillDraftProposals,
 	proposeSkillDrafts,

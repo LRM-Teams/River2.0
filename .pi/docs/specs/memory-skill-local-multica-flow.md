@@ -168,6 +168,27 @@ MULTICA_WORKSPACE_ID + MULTICA_AGENT_ID
 
 每个 Multica agent 是独立 root。Agent A 的 memory/skill 不会进入 Agent B 的目录。
 
+本地 CLI Pi agent 也可以绑定同一个 Multica identity 后参与这套同步，不限于 Multica 上包装的一层 Pi agent。启动本地 Pi 前设置：
+
+```bash
+export MULTICA_WORKSPACE_ID=<workspace_id>
+export MULTICA_AGENT_ID=<agent_id>
+export PI_MEMORY_REMOTE_URL=<multica_server_url>
+export PI_MEMORY_REMOTE_TOKEN=<token>
+# 可选：不设置时默认派生到 ~/multica_workspaces/<workspace_id>/.pi/agents/<agent_id>/
+export PI_AGENT_ROOT=~/multica_workspaces/<workspace_id>/.pi/agents/<agent_id>
+```
+
+然后本地 Pi 可以手动调用 `memory_sync_pull` / `memory_sync_upload`，也可以打开 env-gated 自动兜底：
+
+```bash
+export PI_MEMORY_AUTO_SYNC_PULL_ON_START=1
+export PI_MEMORY_AUTO_SYNC_UPLOAD_ON_SHUTDOWN=1
+# 或用一个总开关：export PI_MEMORY_AUTO_SYNC=1
+```
+
+这些自动 hook 默认关闭，且失败不阻塞 Pi 启动或退出。
+
 ## 3. 本地会话怎么整理成 memory/skill
 
 一次 Pi 会话结束后，大致流程是：

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseEntry, renderEntry } from "../curator-core/metadata.ts";
 import type { MemoryStore } from "../curator-store/types.ts";
@@ -37,7 +37,7 @@ export async function proposeSkillDrafts(
 ): Promise<SkillProposalResult> {
 	const entries = await memoryStore.readEntries("review");
 	const candidates = entries.map(parseReviewCandidate).filter((candidate): candidate is ParsedReviewCandidate => candidate !== null);
-	const threshold = options.seenThreshold ?? 3;
+	const threshold = options.seenThreshold ?? 2;
 	const proposals: SkillProposal[] = [];
 	const existingProposalSources = new Set(
 		entries
@@ -68,7 +68,12 @@ export async function approveSkillDraft(memoryStore: MemoryStore, proposalId: st
 	if (!path) throw new Error(`Skill proposal '${proposalId}' has no promotes_to path.`);
 	const content = buildSkillDraftFromProposal(parsed.body);
 	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, content, { encoding: "utf-8", flag: "wx" });
+	if (existsSync(path)) {
+		const existing = readFileSync(path, "utf-8");
+		if (existing !== content) throw new Error(`Skill draft already exists at '${path}'.`);
+	} else {
+		writeFileSync(path, content, { encoding: "utf-8", flag: "wx" });
+	}
 	const approved = renderEntry({
 		...parsed,
 		metadata: { ...parsed.metadata, status: "approved", approved_at: new Date().toISOString() },
@@ -78,6 +83,21 @@ export async function approveSkillDraft(memoryStore: MemoryStore, proposalId: st
 	updated[index] = approved;
 	await memoryStore.writeEntries("review", updated);
 	return { proposalId, path, content };
+}
+
+export async function approvePendingSkillDrafts(memoryStore: MemoryStore, proposalIds: string[] = []): Promise<SkillApprovalResult[]> {
+	const ids = new Set(proposalIds);
+	for (const entry of await memoryStore.readEntries("review")) {
+		const metadata = parseEntry(entry).metadata;
+		if (metadata.type === "review" && metadata.kind === "skill_promotion" && metadata.status === "proposed" && metadata.id) {
+			ids.add(metadata.id);
+		}
+	}
+	const results: SkillApprovalResult[] = [];
+	for (const id of ids) {
+		results.push(await approveSkillDraft(memoryStore, id));
+	}
+	return results;
 }
 
 export async function listSkillDraftProposals(memoryStore: MemoryStore): Promise<SkillProposal[]> {
@@ -126,14 +146,21 @@ function createSkillProposal(candidate: ParsedReviewCandidate, draftsDir: string
 		"## When to use",
 		description,
 		"",
+		"## Trigger signals",
+		"- The task matches the repeated source evidence or error/fix pattern.",
+		"- The user wants a reusable method rather than a one-off fact.",
+		"",
 		"## Method",
 		candidate.summary || candidate.signature,
 		"",
+		"## Validation",
+		"Use the validation signal from the source evidence. If none is available, run the narrowest relevant check and report the result.",
+		"",
+		"## Stop / avoid",
+		"Stop after validation passes, or report the remaining blocker. Avoid applying this skill when the evidence is project-specific or the trigger does not match.",
+		"",
 		"## Evidence",
 		evidence,
-		"",
-		"## Stop condition",
-		"Stop after the validation signal from the source evidence passes, or report the remaining blocker.",
 		"```",
 	].join("\n");
 	return {
