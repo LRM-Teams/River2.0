@@ -15,14 +15,14 @@ pi install npm:pi-web-access
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.21.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.22.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
 
 - Local extensions: autogoal, goal mode, update_plan, pet, prompt URL widget, snake, TPS notifications.
 - Prompts: changelog audit, issue analysis, PR review, review workflow, commit workflow, wrap workflow.
-- Skills: provider checklist, Pi capability reference, image-to-editable-PPT workflow.
+- Skills: provider checklist, skill-creation workflow, Pi capability reference, image-to-editable-PPT workflow.
 - Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, memory/skill-draft versioning, scoped Multica agent roots, review reminders, and local memory/skill self-evolution queues.
 
 Install the companion packages above with the suite so MCP, subagent, and web tools register from their own package manifests. The bootstrap script installs the same companion packages automatically.

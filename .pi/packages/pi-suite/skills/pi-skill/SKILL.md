@@ -262,6 +262,7 @@ Suite skills currently include:
 - `add-llm-provider`: checklist for adding providers to `packages/ai`.
 - `image-to-editable-ppt-slide`: rebuild reference images as editable PowerPoint slides.
 - `pi-skill`: this capability index.
+- `skill-creator`: create, modify, evaluate, package, and improve Agent Skills with validation and benchmark helpers.
 
 Optional package-provided skills can include:
 
