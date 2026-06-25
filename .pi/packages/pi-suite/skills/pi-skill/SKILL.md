@@ -52,6 +52,7 @@ Memory tools:
 - `scratchpad`: add/done/undo/clear/list checklist items.
 - `memory_search`: qmd-backed keyword, semantic, or deep search across memory files.
 - `memory_curate`: manually run curator lifecycle rules and scan yesterday's daily log into `REVIEW.md` when learning is enabled; output includes pending proposal counts.
+- `memory_session_history_backfill` and `/memory-session-history-backfill`: manually scan historical Pi session JSONL files that missed shutdown learning/curator review, extract review candidates, record processed files in `.session-history-backfill-state.json`, and run memory/skill proposal curation. Defaults to structured extraction only; use `--include-model` / `includeModel` for token-consuming model extraction.
 - `memory_learning_approve`: approve a proposed memory promotion or disabled skill draft by exact id.
 - `memory_learning_reject`: reject or archive a review candidate/proposal without deleting it.
 - `memory_skill_drafts`: list proposed skill drafts.
@@ -90,6 +91,7 @@ Curator and learning behavior:
 - Mutations are audited to `audit/curator.jsonl`.
 - Session shutdown may extract conservative learning candidates into `REVIEW.md`; `/new` and `/fork` also run a lightweight structured-evidence pass.
 - `memory_curate` scans yesterday's daily log once per content hash into review candidates, then curator lifecycle and proposal rules process those candidates.
+- Historical session backfill covers sessions that missed shutdown learning or ran before curator/review was enabled; it scans session JSONL roots on demand, skips already-processed unchanged files unless forced, and feeds the same review/proposal pipeline.
 - Repeated or high-confidence candidates can become proposed memory promotions or proposed disabled skill drafts after `memory_curate`.
 - Skill-worthy `failure -> edit/action -> validation success` patterns become high-confidence skill candidates from structured tool evidence.
 - Skill drafts default to `auto-draft`: high-quality proposals write disabled drafts under the resolved skill draft root, but memory proposals still require approval.

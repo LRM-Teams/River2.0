@@ -121,6 +121,8 @@ let SCRATCHPAD_FILE = path.join(MEMORY_DIR, "SCRATCHPAD.md");
 let DAILY_DIR = path.join(MEMORY_DIR, "daily");
 let SKILL_DRAFTS_DIR = INITIAL_ROOTS.skillDraftsDir;
 
+const SESSION_HISTORY_BACKFILL_STATE = ".session-history-backfill-state.json";
+
 function setResolvedDirs(memoryDir: string, skillDraftsDir: string, agentRoot?: string) {
 	AGENT_ROOT = agentRoot;
 	MEMORY_DIR = memoryDir;
@@ -711,6 +713,13 @@ function getSessionBranch(ctx: ExtensionContext): SessionEntry[] | null {
 	return sessionManager.getBranch();
 }
 
+function getSessionFile(ctx: ExtensionContext): string | undefined {
+	const sessionManager = ctx.sessionManager as ExtensionContext["sessionManager"] & {
+		getSessionFile?: () => string | undefined;
+	};
+	return typeof sessionManager?.getSessionFile === "function" ? sessionManager.getSessionFile() : undefined;
+}
+
 async function resolveExitSummaryApiKey(ctx: ExtensionContext): Promise<string | undefined> {
 	if (!ctx.model) return undefined;
 
@@ -924,19 +933,16 @@ async function writeLearningCandidates(candidates: ReviewCandidateInput[]): Prom
 	return written;
 }
 
-async function runSessionLearningExtractor(
-	ctx: ExtensionContext,
-	options: { source?: string; includeModel?: boolean; includeStructured?: boolean } = {},
-): Promise<number> {
-	if (getMemoryLearningMode() === "off") return 0;
-	const branch = getSessionBranch(ctx);
-	if (!branch) return 0;
-	const source = options.source || "session_shutdown";
+async function extractLearningCandidatesFromBranch(
+	branch: SessionEntry[],
+	ctx: ExtensionContext | undefined,
+	options: { source: string; includeModel?: boolean; includeStructured?: boolean } = { source: "session_shutdown" },
+): Promise<ReviewCandidateInput[]> {
 	const candidates: ReviewCandidateInput[] = [];
 	if (options.includeStructured !== false) {
-		candidates.push(...extractStructuredToolEvidenceCandidates(branch, source));
+		candidates.push(...extractStructuredToolEvidenceCandidates(branch, options.source));
 	}
-	if (options.includeModel !== false && ctx.model) {
+	if (options.includeModel !== false && ctx?.model) {
 		const apiKey = await resolveExitSummaryApiKey(ctx);
 		const conversation = serializeSessionConversation(branch);
 		if (apiKey && conversation.hasMessages && conversation.text.trim()) {
@@ -949,13 +955,226 @@ async function runSessionLearningExtractor(
 			try {
 				const response = await complete(ctx.model, { systemPrompt: LEARNING_EXTRACTOR_SYSTEM_PROMPT, messages }, { apiKey, reasoningEffort: "low" });
 				const raw = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
-				candidates.push(...parseLearningExtractorResponse(raw, source));
+				candidates.push(...parseLearningExtractorResponse(raw, options.source));
 			} catch {
-				// Learning is best-effort and must not block session transitions.
+				// Historical learning is best-effort and must not block the manual pass.
 			}
 		}
 	}
+	return candidates;
+}
+
+async function runSessionLearningExtractor(
+	ctx: ExtensionContext,
+	options: { source?: string; includeModel?: boolean; includeStructured?: boolean } = {},
+): Promise<number> {
+	if (getMemoryLearningMode() === "off") return 0;
+	const branch = getSessionBranch(ctx);
+	if (!branch) return 0;
+	const source = options.source || "session_shutdown";
+	const candidates = await extractLearningCandidatesFromBranch(branch, ctx, { ...options, source });
 	return writeLearningCandidates(candidates);
+}
+
+type SessionHistoryBackfillState = {
+	processed: Record<string, { mtimeMs: number; size: number; processedAt: string; candidates: number }>;
+};
+
+export type SessionHistoryBackfillResult = {
+	scanned: number;
+	processed: number;
+	skipped: number;
+	candidates: number;
+	errors: string[];
+	files: string[];
+	curatorSummary?: string;
+	dryRun: boolean;
+};
+
+function readJsonFile<T>(filePath: string, fallback: T): T {
+	try {
+		return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+	} catch {
+		return fallback;
+	}
+}
+
+function readSessionHistoryBackfillState(): SessionHistoryBackfillState {
+	return readJsonFile(path.join(MEMORY_DIR, SESSION_HISTORY_BACKFILL_STATE), { processed: {} });
+}
+
+function writeSessionHistoryBackfillState(state: SessionHistoryBackfillState): void {
+	fs.writeFileSync(path.join(MEMORY_DIR, SESSION_HISTORY_BACKFILL_STATE), `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+}
+
+function sessionDateFromPath(filePath: string): string | undefined {
+	const match = path.basename(filePath).match(/(\d{4}-\d{2}-\d{2})/);
+	return match?.[1];
+}
+
+function normalizeSessionHistoryRoots(ctx?: ExtensionContext, pathsInput: string[] = []): string[] {
+	const roots = new Set<string>();
+	for (const input of pathsInput) {
+		if (input.trim()) roots.add(path.resolve(ctx?.cwd || process.cwd(), input));
+	}
+	if (roots.size > 0) return [...roots];
+	const sessionFile = ctx ? getSessionFile(ctx) : undefined;
+	if (sessionFile) roots.add(path.dirname(sessionFile));
+	if (ctx?.cwd) roots.add(path.join(ctx.cwd, ".pi", "agent", "sessions"));
+	const home = process.env.HOME;
+	if (home) roots.add(path.join(home, ".pi", "agent", "sessions"));
+	return [...roots];
+}
+
+function collectSessionJsonlFiles(roots: string[], options: { recursive?: boolean; since?: string; limit?: number; exclude?: string }): string[] {
+	const files: string[] = [];
+	const seen = new Set<string>();
+	const exclude = options.exclude ? path.resolve(options.exclude) : undefined;
+	const visit = (candidate: string) => {
+		let stat: fs.Stats;
+		try {
+			stat = fs.statSync(candidate);
+		} catch {
+			return;
+		}
+		if (stat.isDirectory()) {
+			let entries: string[];
+			try {
+				entries = fs.readdirSync(candidate);
+			} catch {
+				return;
+			}
+			for (const entry of entries) {
+				const child = path.join(candidate, entry);
+				if (options.recursive === false) {
+					try {
+						if (fs.statSync(child).isFile() && child.endsWith(".jsonl")) visit(child);
+					} catch {
+						// Ignore unreadable entries.
+					}
+				} else {
+					visit(child);
+				}
+			}
+			return;
+		}
+		if (!stat.isFile() || !candidate.endsWith(".jsonl")) return;
+		const resolved = path.resolve(candidate);
+		if (exclude && resolved === exclude) return;
+		if (seen.has(resolved)) return;
+		const date = sessionDateFromPath(resolved);
+		if (options.since && date && date < options.since) return;
+		seen.add(resolved);
+		files.push(resolved);
+	};
+	for (const root of roots) visit(root);
+	files.sort((a, b) => {
+		try {
+			return fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs;
+		} catch {
+			return a.localeCompare(b);
+		}
+	});
+	return typeof options.limit === "number" && options.limit > 0 ? files.slice(-options.limit) : files;
+}
+
+export function readSessionEntriesFromJsonl(filePath: string): SessionEntry[] {
+	const entries: SessionEntry[] = [];
+	const raw = fs.readFileSync(filePath, "utf-8");
+	for (const line of raw.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		try {
+			const parsed = JSON.parse(trimmed) as SessionEntry;
+			if ((parsed as { type?: string }).type === "message") entries.push(parsed);
+		} catch {
+			// Ignore malformed historical lines; valid messages still contribute.
+		}
+	}
+	return entries;
+}
+
+export async function backfillSessionHistoryLearning(
+	ctx?: ExtensionContext,
+	options: {
+		paths?: string[];
+		limit?: number;
+		since?: string;
+		force?: boolean;
+		dryRun?: boolean;
+		includeModel?: boolean;
+		includeStructured?: boolean;
+		includeCurrent?: boolean;
+		runCuratorAfter?: boolean;
+	} = {},
+): Promise<SessionHistoryBackfillResult> {
+	ensureDirs();
+	const roots = normalizeSessionHistoryRoots(ctx, options.paths);
+	const currentFile = ctx && options.includeCurrent !== true ? getSessionFile(ctx) : undefined;
+	const files = collectSessionJsonlFiles(roots, { recursive: true, since: options.since, limit: options.limit, exclude: currentFile });
+	const state = readSessionHistoryBackfillState();
+	const result: SessionHistoryBackfillResult = { scanned: files.length, processed: 0, skipped: 0, candidates: 0, errors: [], files: [], dryRun: Boolean(options.dryRun) };
+	const candidatesToWrite: ReviewCandidateInput[] = [];
+
+	for (const filePath of files) {
+		try {
+			const stat = fs.statSync(filePath);
+			const previous = state.processed[filePath];
+			if (!options.force && previous && previous.mtimeMs === stat.mtimeMs && previous.size === stat.size) {
+				result.skipped += 1;
+				continue;
+			}
+			const branch = readSessionEntriesFromJsonl(filePath);
+			if (branch.length === 0) {
+				result.skipped += 1;
+				continue;
+			}
+			const source = `session_history_${sessionDateFromPath(filePath) || "unknown"}`;
+			const candidates = await extractLearningCandidatesFromBranch(branch, ctx, {
+				source,
+				includeModel: Boolean(options.includeModel),
+				includeStructured: options.includeStructured,
+			});
+			const datedCandidates = candidates.map((candidate) => ({
+				...candidate,
+				date: candidate.date || sessionDateFromPath(filePath),
+				evidence: [candidate.evidence, `Session: ${path.basename(filePath)}`].filter(Boolean).join("; "),
+			}));
+			candidatesToWrite.push(...datedCandidates);
+			result.candidates += datedCandidates.length;
+			result.processed += 1;
+			result.files.push(filePath);
+			if (!options.dryRun) {
+				state.processed[filePath] = { mtimeMs: stat.mtimeMs, size: stat.size, processedAt: new Date().toISOString(), candidates: datedCandidates.length };
+			}
+		} catch (error) {
+			result.errors.push(`${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	if (!options.dryRun && candidatesToWrite.length > 0) {
+		result.candidates = await writeLearningCandidates(candidatesToWrite);
+		snapshotDirty = true;
+		markDirtyBestEffort();
+		if (options.runCuratorAfter !== false && getMemorySkillDraftsMode() !== "off") {
+			result.curatorSummary = await runCurator("session_history_backfill");
+		}
+		await ensureQmdAvailableForUpdate();
+		scheduleQmdUpdate();
+	}
+	if (!options.dryRun) writeSessionHistoryBackfillState(state);
+	return result;
+}
+
+function formatSessionHistoryBackfillResult(result: SessionHistoryBackfillResult): string {
+	const lines = [
+		`Session history backfill: scanned ${result.scanned}, processed ${result.processed}, skipped ${result.skipped}, candidate change(s) ${result.candidates}${result.dryRun ? " (dry-run)" : ""}.`,
+	];
+	if (result.curatorSummary) lines.push(result.curatorSummary);
+	if (result.errors.length > 0) {
+		lines.push("", `Errors (${result.errors.length}):`, ...result.errors.slice(0, 10).map((error) => `- ${error}`));
+	}
+	return lines.join("\n");
 }
 
 async function generateExitSummary(ctx: ExtensionContext): Promise<ExitSummaryResult> {
@@ -2616,6 +2835,68 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+
+	pi.registerTool({
+		name: "memory_session_history_backfill",
+		label: "Memory Session History Backfill",
+		description: "Manually scan historical Pi session JSONL files that may have missed shutdown review/curator processing, extract review candidates, then run memory/skill proposal curation.",
+		parameters: Type.Object({
+			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional session JSONL files or directories. Defaults to current project/global Pi session roots." })),
+			limit: Type.Optional(Type.Number({ description: "Maximum newest session files to scan after filtering." })),
+			since: Type.Optional(Type.String({ description: "Only scan sessions dated on/after YYYY-MM-DD when the filename contains a date." })),
+			force: Type.Optional(Type.Boolean({ description: "Reprocess files already recorded in .session-history-backfill-state.json." })),
+			dryRun: Type.Optional(Type.Boolean({ description: "Scan and extract without writing REVIEW.md or state." })),
+			includeModel: Type.Optional(Type.Boolean({ description: "Also run the model-based extractor when an API key is available. Default false to avoid token usage." })),
+			includeCurrent: Type.Optional(Type.Boolean({ description: "Include the current live session file. Default false." })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			try {
+				const result = await backfillSessionHistoryLearning(ctx, {
+					paths: params.paths,
+					limit: params.limit,
+					since: params.since,
+					force: params.force,
+					dryRun: params.dryRun,
+					includeModel: params.includeModel,
+					includeCurrent: params.includeCurrent,
+				});
+				return { content: [{ type: "text", text: formatSessionHistoryBackfillResult(result) }], details: result };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { content: [{ type: "text", text: message }], details: { error: message }, isError: true };
+			}
+		},
+	});
+
+	pi.registerCommand("memory-session-history-backfill", {
+		description: "Scan historical session JSONL files for missed memory/skill review candidates",
+		handler: async (args, ctx) => {
+			try {
+				const tokens = args.trim().split(/\s+/).filter(Boolean);
+				const paths: string[] = [];
+				let limit: number | undefined;
+				let since: string | undefined;
+				let force = false;
+				let dryRun = false;
+				let includeModel = false;
+				let includeCurrent = false;
+				for (let i = 0; i < tokens.length; i++) {
+					const token = tokens[i];
+					if (token === "--limit") limit = Number.parseInt(tokens[++i] || "", 10);
+					else if (token === "--since") since = tokens[++i];
+					else if (token === "--force") force = true;
+					else if (token === "--dry-run") dryRun = true;
+					else if (token === "--include-model") includeModel = true;
+					else if (token === "--include-current") includeCurrent = true;
+					else paths.push(token);
+				}
+				const result = await backfillSessionHistoryLearning(ctx, { paths, limit: Number.isFinite(limit) ? limit : undefined, since, force, dryRun, includeModel, includeCurrent });
+				ctx.ui.notify(formatSessionHistoryBackfillResult(result), result.errors.length ? "warning" : "info");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
 
 	// --- memory curator service tools ---
 	pi.registerTool({

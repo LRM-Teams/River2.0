@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import { _setBaseDir, backfillSessionHistoryLearning } from "../index.ts";
 import { JsonlAuditLog } from "./curator-core/audit.ts";
 import { runMemoryCuratorOnce } from "./curator-core/curate.ts";
 import { FileMemoryStore } from "./curator-store/file-store.ts";
 import { defaultRegistryPath, markCurrentRootDirty, scanDirtyRoots } from "./manager/local-curator-manager.ts";
+import { resolveSkillDraftRoot } from "./paths/resolve-roots.ts";
 import {
 	disableCuratorManagerService,
 	disableCuratorService,
@@ -31,6 +33,7 @@ function usage(): string {
 	return [
 		"Usage:",
 		"  jhp-pi-memory-curator run-once [--memory-dir <path>] [--reason <text>] [--dry-run] [--json]",
+		"  jhp-pi-memory-curator session-history-backfill [path ...] [--memory-dir <path>] [--since YYYY-MM-DD] [--limit N] [--force] [--dry-run] [--include-model] [--json]",
 		"  jhp-pi-memory-curator enable [--memory-dir <path>] [--schedule HH:MM]",
 		"  jhp-pi-memory-curator disable [--memory-dir <path>]",
 		"  jhp-pi-memory-curator status [--memory-dir <path>]",
@@ -60,6 +63,29 @@ async function main(): Promise<void> {
 		});
 		if (hasFlag(args, "--json")) console.log(JSON.stringify(result, null, 2));
 		else console.log(result.summary);
+		return;
+	}
+
+	if (command === "session-history-backfill") {
+		_setBaseDir(memoryDir, resolveSkillDraftRoot({ ...process.env, PI_MEMORY_DIR: memoryDir }));
+		const paths = args.filter((arg, index) => {
+			if (arg.startsWith("--")) return false;
+			const previous = args[index - 1];
+			return previous !== "--memory-dir" && previous !== "--since" && previous !== "--limit";
+		});
+		const limitValue = readOption(args, "--limit");
+		const limit = limitValue ? Number.parseInt(limitValue, 10) : undefined;
+		const result = await backfillSessionHistoryLearning(undefined, {
+			paths,
+			limit: Number.isFinite(limit) ? limit : undefined,
+			since: readOption(args, "--since"),
+			force: hasFlag(args, "--force"),
+			dryRun: hasFlag(args, "--dry-run"),
+			includeModel: hasFlag(args, "--include-model"),
+		});
+		if (hasFlag(args, "--json")) console.log(JSON.stringify(result, null, 2));
+		else console.log(`Session history backfill: scanned ${result.scanned}, processed ${result.processed}, skipped ${result.skipped}, candidate change(s) ${result.candidates}${result.dryRun ? " (dry-run)" : ""}.${result.curatorSummary ? `\n${result.curatorSummary}` : ""}`);
+		process.exitCode = result.errors.length ? 1 : 0;
 		return;
 	}
 

@@ -91,6 +91,7 @@ Metadata keys currently supported by tools and curator rules:
 | `scratchpad` | Manage checklist items in `SCRATCHPAD.md` |
 | `memory_search` | Search all memory files with qmd |
 | `memory_curate` | Run curator rules immediately |
+| `memory_session_history_backfill` / `/memory-session-history-backfill` | Scan historical Pi session JSONL files that missed shutdown review/curator processing |
 | `memory_learning_approve` | Approve one proposed memory or skill promotion by exact id |
 | `memory_learning_reject` | Reject or archive one review item by exact id |
 | `memory_skill_drafts` | List proposed skill drafts |
@@ -201,6 +202,8 @@ Old candidates are lifecycle-managed without deletion. Low-confidence candidates
 
 Learning extraction combines text-based model extraction with a lightweight structured tool-evidence pass. The structured pass looks for `failure -> edit/action -> validation success` patterns and emits high-confidence skill candidates. Curator patch audit remains in `audit/curator.jsonl`; learning approvals are tracked through `REVIEW.md` proposal metadata and status changes.
 
+Historical backfill is available for sessions that ended before shutdown learning ran, or sessions created while the curator was disabled. Run `/memory-session-history-backfill [path ...] [--since YYYY-MM-DD] [--limit N] [--force] [--dry-run] [--include-model]` or call `memory_session_history_backfill`. By default it scans current project/global Pi session roots, skips the live session, records processed file metadata in `.session-history-backfill-state.json`, uses the structured pass only to avoid token use, writes candidates into `REVIEW.md`, then runs curator/proposal generation so memory promotions and disabled skill drafts become reviewable.
+
 ## Local Multi-Agent Self-Evolution
 
 Resolver priority:
@@ -253,6 +256,7 @@ CLI:
 jhp-pi-memory-curator enable --schedule 03:00
 jhp-pi-memory-curator status
 jhp-pi-memory-curator run-once
+jhp-pi-memory-curator session-history-backfill --since 2026-06-01 --limit 50
 jhp-pi-memory-curator disable
 ```
 
@@ -289,6 +293,7 @@ The controller uses a systemd user timer when available and falls back to cron. 
 | `PI_MEMORY_LEARNING` | `off`, `review`, `auto-review` | `review` | Control session learning candidate extraction |
 | `PI_MEMORY_LEARNING_MIN_CONFIDENCE` | `low`, `medium`, `high` | `medium` | Minimum extractor confidence to keep |
 | `PI_MEMORY_SKILL_DRAFTS` | `off`, `propose`/`review`, `auto-draft` | `auto-draft` | Control disabled skill draft creation; `propose` only writes proposals, `auto-draft` writes disabled drafts |
+| `.session-history-backfill-state.json` | file in memory root | managed | Tracks historical session JSONL files already scanned by `memory_session_history_backfill` |
 | `PI_MEMORY_SKILL_SEEN_THRESHOLD` | positive integer | `2` | Repeated medium-confidence skill candidate threshold |
 | `PI_MEMORY_AUTO_APPROVE_MEMORY` | `1`, `true`, `yes`, `on` | unset | YOLO mode for approving newly created memory proposals |
 | `PI_MEMORY_AUTO_APPROVE_SKILL_DRAFTS` | `1`, `true`, `yes`, `on` | unset | YOLO mode for creating newly proposed disabled skill drafts |
