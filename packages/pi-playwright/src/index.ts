@@ -147,7 +147,7 @@ async function closeBrowser(): Promise<void> {
 }
 
 function formatJson(value: unknown): string {
-	return JSON.stringify(value, null, 2);
+	return JSON.stringify(value, null, 2) ?? String(value);
 }
 
 function normalizeButton(button: string | undefined): "left" | "right" | "middle" {
