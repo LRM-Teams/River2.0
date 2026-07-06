@@ -1,10 +1,11 @@
 {
 	"name": "@jhp/pi-memory",
-	"version": "0.3.16",
+	"version": "0.4.2",
 	"description": "Pi coding agent extension for structured time-aware memory with qmd-powered search and curator support",
 	"main": "index.ts",
 	"bin": {
-		"jhp-pi-memory-curator": "./src/cli.ts"
+		"jhp-pi-memory-curator": "./src/cli.ts",
+		"jhp-pi-memory-background-shutdown": "./scripts/background-shutdown-cli.ts"
 	},
 	"type": "module",
 	"keywords": [
