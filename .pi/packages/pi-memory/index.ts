@@ -1686,6 +1686,37 @@ function backgroundShutdownCliPath(): string {
 }
 
 /**
+ * Resolve a TypeScript-capable runtime for the detached worker. Node 22 cannot
+ * type-strip files under node_modules (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING),
+ * and the worker lives under node_modules, so prefer `bun` (handles TS anywhere)
+ * then `tsx` (bundled with pi-suite), falling back to `node` last (the worker
+ * will fail and the handler falls back to the synchronous workload).
+ * Returns [execPath, preArgs[]].
+ */
+function resolveBackgroundShutdownRuntime(): [string, string[]] {
+	const candidates: Array<[string, string[]]> = [];
+	// 1. bun (anywhere on PATH).
+	for (const dir of (process.env.PATH ?? "").split(":")) {
+		if (!dir) continue;
+		const bunPath = path.join(dir, "bun");
+		try {
+			if (fs.statSync(bunPath).isFile() && !bunPath.includes("node_modules")) {
+				candidates.push([bunPath, []]);
+				break;
+			}
+		} catch {}
+	}
+	// 2. tsx loader (bundled under the agent npm .bin), run via node.
+	try {
+		const tsxPath = new URL("../../../../.bin/tsx", import.meta.url).pathname;
+		if (fs.existsSync(tsxPath)) candidates.push([process.execPath, [tsxPath]]);
+	} catch {}
+	// 3. node last resort.
+	candidates.push([process.execPath, []]);
+	return candidates[0];
+}
+
+/**
  * Spawn a detached background process that performs the full final-exit
  * memory workload (exit summary, learning extractor, curator, qmd, sync upload).
  * Returns immediately after spawning; the main pi process is free to exit.
@@ -1728,10 +1759,11 @@ async function spawnBackgroundShutdown(ctx: ExtensionContext, reason: ExitSummar
 	fs.writeFileSync(payloadPath, JSON.stringify(payload), "utf-8");
 
 	const cliScript = backgroundShutdownCliPath();
+	const [runtimeExec, runtimePreArgs] = resolveBackgroundShutdownRuntime();
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	if (apiKey) env.__PI_MEMORY_BG_KEY = apiKey;
 
-	const child = spawn(process.execPath, [cliScript, "--payload", payloadPath], {
+	const child = spawn(runtimeExec, [...runtimePreArgs, cliScript, "--payload", payloadPath], {
 		detached: true,
 		stdio: "ignore",
 		env,
