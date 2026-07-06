@@ -25,7 +25,7 @@
  *   - SCRATCHPAD.md + daily logs + USER.md + current STATE.md + MEMORY.md
  */
 
-import { type ExecFileOptions, execFile } from "node:child_process";
+import { type ExecFileOptions, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -530,7 +530,7 @@ function formatContextSection(label: string, content: string, mode: TruncateMode
 	return `${label}\n\n${result.preview}${note}`;
 }
 
-type ExitSummaryReason = "ctrl+d" | "slash-quit" | "session-end";
+export type ExitSummaryReason = "ctrl+d" | "slash-quit" | "session-end";
 type TransitionHandoffReason = "new" | "fork";
 
 interface ExitSummaryResult {
@@ -1649,6 +1649,134 @@ let updateTimer: ReturnType<typeof setTimeout> | null = null;
 let exitSummaryReason: ExitSummaryReason | null = null;
 let terminalInputUnsubscribe: (() => void) | null = null;
 
+// --- Background (detached) shutdown ---
+// The final-exit workload (exit summary + learning extractor + curator + qmd)
+// can take 30-60s because it issues additional LLM calls. In non-interactive
+// (print/json) modes nobody is watching a UI, so we offload the whole workload
+// to a detached child process and let the main pi process exit immediately.
+// The worker reads the session JSONL from disk, reconstructs a minimal ctx,
+// and runs the same workload. Memory still lands in the right agent dir because
+// the worker inherits PI_AGENT_ROOT / PI_MEMORY_DIR from process.env.
+
+export type BackgroundShutdownMode = "auto" | "on" | "off";
+
+export function getBackgroundShutdownMode(env: MemoryEnv = process.env): BackgroundShutdownMode {
+	const raw = (env.PI_MEMORY_BACKGROUND_SHUTDOWN ?? "auto").toLowerCase();
+	if (raw === "off" || raw === "0" || raw === "false" || raw === "no") return "off";
+	if (raw === "on" || raw === "1" || raw === "true" || raw === "yes" || raw === "always") return "on";
+	return "auto";
+}
+
+/**
+ * Whether the final-exit workload should run in a detached background process.
+ * `auto` enables it only in non-interactive (print/json) modes where there is
+ * no UI to surface the "memory learning today" notify. `on` forces it everywhere
+ * (useful for headless/RPC). `off` keeps the legacy synchronous behavior.
+ */
+export function shouldRunBackgroundShutdown(ctx: ExtensionContext, env: MemoryEnv = process.env): boolean {
+	const mode = getBackgroundShutdownMode(env);
+	if (mode === "off") return false;
+	if (mode === "on") return true;
+	return ctx.mode === "json" || ctx.mode === "print";
+}
+
+/** Resolve the path to the detached shutdown CLI script packaged alongside. */
+function backgroundShutdownCliPath(): string {
+	return new URL("./scripts/background-shutdown-cli.ts", import.meta.url).pathname;
+}
+
+/**
+ * Spawn a detached background process that performs the full final-exit
+ * memory workload (exit summary, learning extractor, curator, qmd, sync upload).
+ * Returns immediately after spawning; the main pi process is free to exit.
+ *
+ * A JSON payload (session file, session id, reason, serialized model) is written
+ * to `<memory>/audit/` and its path passed to the worker. The API key is handed
+ * over via a private env var so it never lands on disk.
+ */
+async function spawnBackgroundShutdown(ctx: ExtensionContext, reason: ExitSummaryReason): Promise<void> {
+	const sessionFile = getSessionFile(ctx);
+	if (!sessionFile || !fs.existsSync(sessionFile)) {
+		throw new Error("session file unavailable; cannot offload shutdown");
+	}
+	const sessionId = ctx.sessionManager.getSessionId();
+	let apiKey: string | undefined;
+	try {
+		apiKey = await resolveExitSummaryApiKey(ctx);
+	} catch {
+		apiKey = undefined;
+	}
+	let modelJson: string | null = null;
+	if (ctx.model) {
+		try {
+			modelJson = JSON.stringify(ctx.model);
+		} catch {
+			modelJson = null;
+		}
+	}
+	const payload = {
+		sessionFile,
+		sessionId,
+		reason: reason ?? "session-end",
+		model: modelJson,
+	};
+
+	ensureDirs();
+	const auditDir = path.join(MEMORY_DIR, "audit");
+	fs.mkdirSync(auditDir, { recursive: true });
+	const payloadPath = path.join(auditDir, `bg-shutdown-${Date.now()}-${process.pid}.json`);
+	fs.writeFileSync(payloadPath, JSON.stringify(payload), "utf-8");
+
+	const cliScript = backgroundShutdownCliPath();
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	if (apiKey) env.__PI_MEMORY_BG_KEY = apiKey;
+
+	const child = spawn(process.execPath, [cliScript, "--payload", payloadPath], {
+		detached: true,
+		stdio: "ignore",
+		env,
+	});
+	child.unref();
+}
+
+/**
+ * The final-exit memory workload: exit summary, learning extractor, curator,
+ * qmd update, and best-effort sync upload. Extracted so it can run either
+ * inline (synchronous shutdown) or inside a detached background worker that
+ * reconstructs a minimal ctx from the session JSONL on disk.
+ */
+export async function runFinalExitWorkload(ctx: ExtensionContext, reason: ExitSummaryReason | null): Promise<void> {
+	try {
+		if (reason) {
+			ensureDirs();
+			const result = await generateExitSummary(ctx);
+			if (result.hasMessages) {
+				const summary = result.summary ?? buildExitSummaryFallback(result.error);
+				const sid = shortSessionId(ctx.sessionManager.getSessionId());
+				const ts = nowTimestamp();
+				const entry = formatExitSummaryEntry(summary, reason, sid, ts);
+				const filePath = dailyPath(todayStr());
+				const existing = readFileSafe(filePath) ?? "";
+				const separator = existing.trim() ? "\n\n" : "";
+				fs.writeFileSync(filePath, existing + separator + entry, "utf-8");
+				const newCandidates = await runSessionLearningExtractor(ctx);
+				if (getMemorySkillDraftsMode() === "auto-draft") await runCurator("session_learning");
+				if (ctx.hasUI && process.env.PI_MEMORY_REVIEW_SESSION_SUMMARY !== "0") {
+					const reviewText = readFileSafe(REVIEW_FILE) ?? "";
+					const pending = countPendingReviewItems(reviewText);
+					const candidates = countReviewCandidates(reviewText);
+					const skills = listMemorySkills(process.env);
+					ctx.ui.notify(`Memory learning today: ${newCandidates} new candidate(s), ${candidates.skill} skill candidate(s), ${pending.memory} memory proposal(s), ${pending.skill} skill proposal(s), ${skills.drafts.length} draft(s).`, "info");
+				}
+				await ensureQmdAvailableForUpdate();
+				await runQmdUpdateNow();
+			}
+		}
+	} finally {
+		await runAutoSyncUploadBestEffort();
+	}
+}
+
 /** Override execFile implementation (for testing). */
 export function _setExecFileForTest(fn: ExecFileFn) {
 	execFileFn = fn;
@@ -2126,34 +2254,37 @@ export default function (pi: ExtensionAPI) {
 		const reason = exitSummaryReason ?? "session-end";
 		exitSummaryReason = null;
 
-		try {
-			if (reason) {
-				ensureDirs();
-				const result = await generateExitSummary(ctx);
-				if (result.hasMessages) {
-					const summary = result.summary ?? buildExitSummaryFallback(result.error);
-					const sid = shortSessionId(ctx.sessionManager.getSessionId());
-					const ts = nowTimestamp();
-					const entry = formatExitSummaryEntry(summary, reason, sid, ts);
-					const filePath = dailyPath(todayStr());
-					const existing = readFileSafe(filePath) ?? "";
-					const separator = existing.trim() ? "\n\n" : "";
-					fs.writeFileSync(filePath, existing + separator + entry, "utf-8");
-					const newCandidates = await runSessionLearningExtractor(ctx);
-					if (getMemorySkillDraftsMode() === "auto-draft") await runCurator("session_learning");
-					if (ctx.hasUI && process.env.PI_MEMORY_REVIEW_SESSION_SUMMARY !== "0") {
-						const reviewText = readFileSafe(REVIEW_FILE) ?? "";
-						const pending = countPendingReviewItems(reviewText);
-						const candidates = countReviewCandidates(reviewText);
-						const skills = listMemorySkills(process.env);
-						ctx.ui.notify(`Memory learning today: ${newCandidates} new candidate(s), ${candidates.skill} skill candidate(s), ${pending.memory} memory proposal(s), ${pending.skill} skill proposal(s), ${skills.drafts.length} draft(s).`, "info");
-					}
-					await ensureQmdAvailableForUpdate();
-					await runQmdUpdateNow();
+		// Background (detached) shutdown: offload the full final-exit workload to a
+		// child process so the main pi process can exit immediately. Only active in
+		// non-interactive (print/json) modes by default (PI_MEMORY_BACKGROUND_SHUTDOWN).
+		if (shouldRunBackgroundShutdown(ctx)) {
+			let offloaded = false;
+			try {
+				await spawnBackgroundShutdown(ctx, reason);
+				offloaded = true;
+			} catch (err) {
+				// Fall through to the synchronous workload below so the session still
+				// gets its summary/learning even if the worker spawn fails.
+				try {
+					const auditDir = path.join(MEMORY_DIR, "audit");
+					fs.mkdirSync(auditDir, { recursive: true });
+					fs.appendFileSync(path.join(auditDir, "background-shutdown-errors.jsonl"), JSON.stringify({ ts: nowTimestamp(), error: err instanceof Error ? err.message : String(err) }) + "\n", "utf-8");
+				} catch {
+					// Best-effort logging only.
 				}
 			}
+			if (offloaded) {
+				if (updateTimer) {
+					clearTimeout(updateTimer);
+					updateTimer = null;
+				}
+				return;
+			}
+		}
+
+		try {
+			await runFinalExitWorkload(ctx, reason);
 		} finally {
-			await runAutoSyncUploadBestEffort();
 			if (updateTimer) {
 				clearTimeout(updateTimer);
 				updateTimer = null;
