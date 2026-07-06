@@ -1,6 +1,6 @@
 {
 	"name": "@jhp/pi-memory",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"description": "Pi coding agent extension for structured time-aware memory with qmd-powered search and curator support",
 	"main": "index.ts",
 	"bin": {

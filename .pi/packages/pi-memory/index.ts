@@ -1669,15 +1669,26 @@ export function getBackgroundShutdownMode(env: MemoryEnv = process.env): Backgro
 
 /**
  * Whether the final-exit workload should run in a detached background process.
- * `auto` enables it only in non-interactive (print/json) modes where there is
- * no UI to surface the "memory learning today" notify. `on` forces it everywhere
- * (useful for headless/RPC). `off` keeps the legacy synchronous behavior.
+ *
+ * NOTE: the detached worker path is currently **disabled by default** because the
+ * standalone worker process cannot reliably resolve its peer dependencies
+ * (`@earendil-works/pi-ai` moved `complete` to a `/compat` subpath in 0.80.x,
+ * and node_modules tree resolution differs from the in-process loader). The
+ * Multica daemon instead achieves the same latency win with an early-complete
+ * on `turn_end` (see multica server/pkg/agent/pi.go), so the main pi process
+ * can still exit immediately while the synchronous shutdown workload runs to
+ * completion inside it.
+ *
+ * Set `PI_MEMORY_BACKGROUND_SHUTDOWN=on` to opt back into the detached worker
+ * (e.g. once pi-memory migrates to the compat import). `off` keeps the legacy
+ * synchronous behavior. `auto` is treated as `off` until the worker is fixed.
  */
 export function shouldRunBackgroundShutdown(ctx: ExtensionContext, env: MemoryEnv = process.env): boolean {
 	const mode = getBackgroundShutdownMode(env);
 	if (mode === "off") return false;
 	if (mode === "on") return true;
-	return ctx.mode === "json" || ctx.mode === "print";
+	// auto: disabled until worker dependency resolution is fixed (see note above).
+	return false;
 }
 
 /** Resolve the path to the detached shutdown CLI script packaged alongside. */
