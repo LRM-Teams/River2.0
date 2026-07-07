@@ -25,6 +25,7 @@ interface PlanDetails {
 const PLAN_TOOL_NAME = "update_plan";
 const PLAN_STATE_TYPE = "update-plan-state";
 const WIDGET_KEY = "update-plan";
+const DEFAULT_INIT_PHASE = "Work";
 
 const PlanOp = StringEnum(["list", "init", "start", "done", "drop", "rm", "append", "note"] as const);
 
@@ -58,6 +59,29 @@ type PlanOperationInput = {
 };
 
 type UpdatePlanInput = { ops: PlanOperationInput[] };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function prepareUpdatePlanArguments(args: unknown): UpdatePlanInput {
+	if (!isRecord(args) || !Array.isArray(args.ops)) return args as UpdatePlanInput;
+	let changed = false;
+	const ops = args.ops.map((rawOp) => {
+		if (!isRecord(rawOp)) return rawOp;
+		if (rawOp.op !== "init") return rawOp;
+		if (Array.isArray(rawOp.list) && rawOp.list.length > 0) return rawOp;
+		if (!isStringArray(rawOp.items) || rawOp.items.length === 0) return rawOp;
+		changed = true;
+		const phase = typeof rawOp.phase === "string" && rawOp.phase.length > 0 ? rawOp.phase : DEFAULT_INIT_PHASE;
+		return { ...rawOp, list: [{ phase, items: rawOp.items }] };
+	});
+	return changed ? ({ ...args, ops } as UpdatePlanInput) : (args as UpdatePlanInput);
+}
 
 function cloneItem(item: PlanItem): PlanItem {
 	return {
@@ -281,7 +305,7 @@ export default function updatePlanExtension(pi: ExtensionAPI): void {
 		return {
 			message: {
 				customType: "update-plan-guidance",
-				content: `<update_plan_guidance>\nFor non-trivial tasks with 3+ distinct steps, or when the user provides a checklist/plan, call update_plan before implementation. Keep exactly one open task in_progress, update it immediately after each completed step, and do not use update_plan for trivial one-step requests.\n</update_plan_guidance>`,
+				content: `<update_plan_guidance>\nFor non-trivial tasks with 3+ distinct steps, or when the user provides a checklist/plan, call update_plan before implementation. For init, use ops[0].list = [{ phase, items }]; do not put items directly on an init operation. Keep exactly one open task in_progress, update it immediately after each completed step, and do not use update_plan for trivial one-step requests.\n</update_plan_guidance>`,
 				display: false,
 			},
 		};
@@ -291,14 +315,16 @@ export default function updatePlanExtension(pi: ExtensionAPI): void {
 		name: PLAN_TOOL_NAME,
 		label: "Update Plan",
 		description:
-			"Maintain a visible execution plan. Use for multi-step tasks: init the plan, mark exactly one task in_progress, and mark tasks done/drop as work proceeds.",
+			"Maintain a visible execution plan. Use for multi-step tasks: init the plan with list, mark exactly one task in_progress, and mark tasks done/drop as work proceeds.",
 		promptSnippet: "Maintain a visible execution plan for non-trivial multi-step tasks.",
 		promptGuidelines: [
 			"For tasks with 3+ distinct steps, or when the user provides a checklist, call update_plan with init before doing the work.",
+			"For init, pass list: [{ phase, items }]. Do not put items directly on the init operation.",
 			"Keep exactly one open task in_progress; mark tasks done immediately after completing them.",
 			"Do not use update_plan for trivial single-step requests.",
 		],
 		parameters: UpdatePlanParams,
+		prepareArguments: prepareUpdatePlanArguments,
 		executionMode: "sequential",
 		async execute(_toolCallId, params: UpdatePlanInput, _signal, _onUpdate, ctx) {
 			let error: string | undefined;
