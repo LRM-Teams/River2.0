@@ -207,7 +207,7 @@ if ensure_bun; then
   mkdir -p "$HOME/.pi/agent/memory"
   if command -v qmd >/dev/null 2>&1; then
     qmd collection add "$HOME/.pi/agent/memory" --name pi-memory || true
-    qmd embed || echo "qmd embed failed; run 'qmd embed' later to enable semantic memory_search."
+    echo "qmd collection ready. Run 'qmd embed' later if you need semantic memory_search."
   else
     echo "qmd was installed but is not on PATH. Add ~/.bun/bin to PATH, then run qmd embed."
   fi

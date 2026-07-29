@@ -7,7 +7,7 @@ Structured, time-aware memory extension for pi. It stores memory as plain Markdo
 - Plain Markdown storage under resolved memory roots: standalone `~/.pi/agent/memory`, explicit `PI_MEMORY_DIR`, or Multica `~/multica_workspaces/<workspace>/.pi/agents/<agent>/memory`.
 - Unified tools for memory write/read/edit/search and scratchpad management.
 - Structured `USER.md`, `STATE.md`, and `REVIEW.md` entries with metadata.
-- Optional qmd-powered keyword, semantic, and deep search.
+- Built-in lexical search with optional qmd-powered keyword, semantic, and deep search.
 - KV cache-stable context injection by default.
 - Curator core for exact dedupe, event lifecycle updates, temporary review, quota reset, and audit logs.
 - Review-first learning candidates that can become memory promotions or disabled skill drafts after approval, with `/memory-review` pending reminders.
@@ -26,7 +26,7 @@ Local development:
 pi install ./pi-memory
 ```
 
-Optional search support requires qmd:
+Lexical `memory_search` works without qmd or embeddings. Optional BM25, semantic, and deep search support requires qmd:
 
 ```bash
 bun install -g https://github.com/tobi/qmd
@@ -89,7 +89,7 @@ Metadata keys currently supported by tools and curator rules:
 | `memory_read` | Read one memory target, all memory files, or daily log lists |
 | `memory_edit` | Read/add/replace/remove/replace_all/compact structured entries |
 | `scratchpad` | Manage checklist items in `SCRATCHPAD.md` |
-| `memory_search` | Search all memory files with qmd |
+| `memory_search` | Search all memory files with qmd and automatically fall back to local lexical matching |
 | `memory_curate` | Run curator rules immediately |
 | `memory_session_history_backfill` / `/memory-session-history-backfill` | Scan historical Pi session JSONL files that missed shutdown review/curator processing |
 | `memory_learning_approve` | Approve one proposed memory or skill promotion by exact id |

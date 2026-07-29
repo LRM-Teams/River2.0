@@ -1,9 +1,8 @@
 /**
  * Memory Extension with QMD-Powered Search
  *
- * Structured Markdown memory system with semantic search via qmd.
- * Core memory tools (write/read/edit/scratchpad) work without qmd installed.
- * The memory_search tool requires qmd for keyword, semantic, and hybrid search.
+ * Structured Markdown memory system with optional semantic search via qmd.
+ * Core memory tools and lexical memory_search work without qmd installed.
  *
  * Layout (under ~/.pi/agent/memory/):
  *   MEMORY.md             — durable facts, decisions, and preferences
@@ -18,7 +17,7 @@
  *   memory_read    — read any memory target or list daily logs
  *   memory_edit    — add, replace, remove, replace_all, or compact structured entries
  *   scratchpad     — add/check/uncheck/clear items on the scratchpad checklist
- *   memory_search  — search across all memory files via qmd (keyword, semantic, or deep)
+ *   memory_search  — search all memory files via qmd with a built-in text fallback
  *   memory_curate  — run curator lifecycle rules immediately
  *
  * Context injection:
@@ -2006,7 +2005,7 @@ async function runQmdUpdateNow() {
 
 /** Search for memories relevant to the user's prompt. Returns formatted markdown or empty string on error. */
 export async function searchRelevantMemories(prompt: string): Promise<string> {
-	if (!qmdAvailable || !prompt.trim()) return "";
+	if (!prompt.trim()) return "";
 
 	// Sanitize: strip control chars, limit to 200 chars for the search query
 	const sanitized = prompt
@@ -2016,31 +2015,21 @@ export async function searchRelevantMemories(prompt: string): Promise<string> {
 		.slice(0, 200);
 	if (!sanitized) return "";
 
+	if (!qmdAvailable) return formatSearchSnippets(searchTextMemories(sanitized, 3));
+
 	try {
 		const hasCollection = await checkCollection(qmdCollectionName());
-		if (!hasCollection) return "";
+		if (!hasCollection) return formatSearchSnippets(searchTextMemories(sanitized, 3));
 
 		const results = await Promise.race([
 			runQmdSearch("keyword", sanitized, 3),
 			new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3_000)),
 		]);
 
-		if (!results || results.results.length === 0) return "";
-
-		const snippets = results.results
-			.map((r) => {
-				const text = getQmdResultText(r);
-				if (!text.trim()) return null;
-				const filePath = getQmdResultPath(r);
-				const filePart = filePath ? `_${filePath}_` : "";
-				return filePart ? `${filePart}\n${text.trim()}` : text.trim();
-			})
-			.filter(Boolean);
-
-		if (snippets.length === 0) return "";
-		return snippets.join("\n\n---\n\n");
+		if (!results || results.results.length === 0) return formatSearchSnippets(searchTextMemories(sanitized, 3));
+		return formatSearchSnippets(results.results);
 	} catch {
-		return "";
+		return formatSearchSnippets(searchTextMemories(sanitized, 3));
 	}
 }
 
@@ -2061,6 +2050,80 @@ function getQmdResultPath(r: QmdSearchResult): string | undefined {
 
 function getQmdResultText(r: QmdSearchResult): string {
 	return r.content ?? r.chunk ?? r.snippet ?? "";
+}
+
+function formatSearchSnippets(results: QmdSearchResult[]): string {
+	const snippets = results
+		.map((result) => {
+			const text = getQmdResultText(result).trim();
+			if (!text) return null;
+			const filePath = getQmdResultPath(result);
+			return filePath ? `_${filePath}_\n${text}` : text;
+		})
+		.filter((snippet): snippet is string => snippet !== null);
+	return snippets.join("\n\n---\n\n");
+}
+
+function collectMarkdownFiles(root: string): string[] {
+	const files: string[] = [];
+	const visit = (directory: string) => {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(directory, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			if (entry.name.startsWith(".")) continue;
+			const filePath = path.join(directory, entry.name);
+			if (entry.isDirectory()) visit(filePath);
+			else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) files.push(filePath);
+		}
+	};
+	visit(root);
+	return files;
+}
+
+/** Dependency-free lexical fallback used when qmd or vector embeddings are unavailable. */
+export function searchTextMemories(query: string, limit = 5): QmdSearchResult[] {
+	const normalizedQuery = query
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: we intentionally strip control chars.
+		.replace(/[\x00-\x1f\x7f]/g, " ")
+		.trim()
+		.toLowerCase();
+	if (!normalizedQuery || limit <= 0) return [];
+
+	const terms = [...new Set(normalizedQuery.split(/[^\p{L}\p{N}_#@.-]+/u).filter((term) => term.length >= 2))];
+	const results: Array<QmdSearchResult & { line: number }> = [];
+
+	for (const filePath of collectMarkdownFiles(MEMORY_DIR)) {
+		const content = readFileSafe(filePath);
+		if (!content) continue;
+		const lines = content.split("\n");
+		for (let index = 0; index < lines.length; index++) {
+			const normalizedLine = lines[index].toLowerCase();
+			const phraseMatches = normalizedLine.split(normalizedQuery).length - 1;
+			const matchedTerms = terms.filter((term) => normalizedLine.includes(term));
+			if (phraseMatches === 0 && matchedTerms.length === 0) continue;
+			const occurrenceCount = matchedTerms.reduce(
+				(total, term) => total + normalizedLine.split(term).length - 1,
+				0,
+			);
+			const start = Math.max(0, index - 2);
+			const end = Math.min(lines.length, index + 3);
+			results.push({
+				path: path.relative(MEMORY_DIR, filePath) || path.basename(filePath),
+				score: phraseMatches * 100 + matchedTerms.length * 10 + occurrenceCount,
+				content: lines.slice(start, end).join("\n").trim(),
+				line: index + 1,
+			});
+		}
+	}
+
+	return results
+		.sort((left, right) => (right.score ?? 0) - (left.score ?? 0) || left.path!.localeCompare(right.path!) || left.line - right.line)
+		.slice(0, Math.floor(limit))
+		.map(({ line: _line, ...result }) => result);
 }
 
 function stripAnsi(text: string): string {
@@ -3443,11 +3506,12 @@ export default function (pi: ExtensionAPI) {
 		label: "Memory Search",
 		description:
 			"Search across all memory files (MEMORY.md, SCRATCHPAD.md, daily logs).\n" +
-			"Modes:\n" +
+			"qmd is preferred when available; otherwise search automatically falls back to local lexical matching.\n" +
+			"Requested modes:\n" +
 			"- 'keyword' (default, ~30ms): Fast BM25 search. Best for specific terms, dates, names, #tags, [[links]].\n" +
 			"- 'semantic' (~2s): Meaning-based search. Finds related concepts even with different wording.\n" +
 			"- 'deep' (~10s): Hybrid search with reranking. Use when other modes don't find what you need.\n" +
-			"If semantic/deep warns about missing embeddings, run `qmd embed` once and retry.\n" +
+			"Without vector embeddings, semantic/deep requests return lexical fallback results; run `qmd embed` only if vector search is needed.\n" +
 			"If the first search doesn't find what you need, try rephrasing or switching modes. " +
 			"Keyword mode is best for specific terms; semantic mode finds related concepts even with different wording.",
 		parameters: Type.Object({
@@ -3460,22 +3524,33 @@ export default function (pi: ExtensionAPI) {
 			limit: Type.Optional(Type.Number({ description: "Max results (default: 5)" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			const mode = params.mode ?? "keyword";
+			const limit = params.limit ?? 5;
+			const textFallback = (reason: string) => {
+				const results = searchTextMemories(params.query, limit);
+				const formatted = formatMemorySearchResults(results);
+				return {
+					content: [{
+						type: "text" as const,
+						text: formatted || `No text matches found for "${params.query}".`,
+					}],
+					details: {
+						backend: "text",
+						requestedMode: mode,
+						query: params.query,
+						count: results.length,
+						fallbackReason: reason,
+					},
+				};
+			};
+
 			if (!qmdAvailable) {
 				// Re-check on demand in case qmd was installed after session start.
 				qmdAvailable = await detectQmd();
 			}
 
 			if (!qmdAvailable) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: qmdInstallInstructions(),
-						},
-					],
-					isError: true,
-					details: {},
-				};
+				return textFallback("qmd unavailable");
 			}
 
 			let hasCollection = await checkCollection(qmdCollectionName());
@@ -3486,20 +3561,8 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 			if (!hasCollection) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: "Could not set up qmd pi-memory collection. Check that qmd is working and the memory directory exists.",
-						},
-					],
-					isError: true,
-					details: {},
-				};
+				return textFallback("qmd collection unavailable");
 			}
-
-			const mode = params.mode ?? "keyword";
-			const limit = params.limit ?? 5;
 
 			try {
 				const { results, stderr } = await runQmdSearch(mode, params.query, limit);
@@ -3507,61 +3570,32 @@ export default function (pi: ExtensionAPI) {
 
 				if (results.length === 0) {
 					if (needsEmbed && (mode === "semantic" || mode === "deep")) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: [
-										`No results found for "${params.query}" (mode: ${mode}).`,
-										"",
-										"qmd reports missing vector embeddings for one or more documents.",
-										"Run this once, then retry:",
-										"  qmd embed",
-									].join("\n"),
-								},
-							],
-							details: { mode, query: params.query, count: 0, needsEmbed: true },
-						};
+						return textFallback("qmd vector embeddings unavailable");
 					}
-					return {
-						content: [
-							{
-								type: "text",
-								text: `No results found for "${params.query}" (mode: ${mode}).`,
-							},
-						],
-						details: { mode, query: params.query, count: 0, needsEmbed },
-					};
+					return textFallback("qmd returned no results");
 				}
 
-				const formatted = results
-					.map((r, i) => {
-						const parts: string[] = [`### Result ${i + 1}`];
-						const filePath = getQmdResultPath(r);
-						if (filePath) parts.push(`**File:** ${filePath}`);
-						if (r.score != null) parts.push(`**Score:** ${r.score}`);
-						const text = getQmdResultText(r);
-						if (text) parts.push(`\n${text}`);
-						return parts.join("\n");
-					})
-					.join("\n\n---\n\n");
-
 				return {
-					content: [{ type: "text", text: formatted }],
-					details: { mode, query: params.query, count: results.length, needsEmbed },
+					content: [{ type: "text", text: formatMemorySearchResults(results) }],
+					details: { backend: "qmd", mode, query: params.query, count: results.length, needsEmbed },
 				};
 			} catch (err) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `memory_search error: ${err instanceof Error ? err.message : String(err)}`,
-						},
-					],
-					isError: true,
-					details: {},
-				};
+				return textFallback(`qmd error: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		},
 	});
+}
+
+function formatMemorySearchResults(results: QmdSearchResult[]): string {
+	return results
+		.map((result, index) => {
+			const parts: string[] = [`### Result ${index + 1}`];
+			const filePath = getQmdResultPath(result);
+			if (filePath) parts.push(`**File:** ${filePath}`);
+			if (result.score != null) parts.push(`**Score:** ${result.score}`);
+			const text = getQmdResultText(result);
+			if (text) parts.push(`\n${text}`);
+			return parts.join("\n");
+		})
+		.join("\n\n---\n\n");
 }

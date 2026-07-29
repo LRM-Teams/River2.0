@@ -15,7 +15,7 @@ pi install npm:pi-web-access
 Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.23.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.32.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 ## What Is Included
@@ -106,7 +106,7 @@ The API key is written to `~/.pi/agent/models.json` on the user's machine. Do no
 - `scratchpad`
 - `memory_curate`
 
-`memory_search` needs qmd. The bootstrap script installs and initializes qmd when Bun is available. If Bun is missing, install qmd later:
+`memory_search` automatically falls back to local lexical matching without qmd or embeddings. The bootstrap script installs qmd and initializes its collection when Bun is available, but does not run the time-consuming embedding step. Run `qmd embed` only when semantic search is needed. If Bun is missing, install qmd later:
 
 ```bash
 bun install -g https://github.com/tobi/qmd

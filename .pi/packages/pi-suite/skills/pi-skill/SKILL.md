@@ -50,7 +50,7 @@ Memory tools:
 - `memory_read`: read long-term, scratchpad, daily, list, user, state, review, or all memory.
 - `memory_edit`: read/add/replace/remove/replace_all/compact structured entries in `MEMORY.md`, `USER.md`, `STATE.md`, and `REVIEW.md`.
 - `scratchpad`: add/done/undo/clear/list checklist items.
-- `memory_search`: qmd-backed keyword, semantic, or deep search across memory files.
+- `memory_search`: qmd-backed keyword, semantic, or deep search across memory files with automatic local lexical fallback.
 - `memory_curate`: manually run curator lifecycle rules and scan yesterday's daily log into `REVIEW.md` when learning is enabled; output includes pending proposal counts.
 - `memory_session_history_backfill` and `/memory-session-history-backfill`: manually scan historical Pi session JSONL files that missed shutdown learning/curator review, extract review candidates, record processed files in `.session-history-backfill-state.json`, and run memory/skill proposal curation. Defaults to structured extraction only; use `--include-model` / `includeModel` for token-consuming model extraction.
 - `memory_learning_approve`: approve a proposed memory promotion or disabled skill draft by exact id.
@@ -129,9 +129,9 @@ External curator service:
 
 QMD search:
 
-- Core memory works without qmd.
-- `memory_search` requires qmd for keyword, semantic, and deep search.
-- Bootstrap attempts to install Bun + qmd, adds `~/.pi/agent/memory` as the `pi-memory` collection, and runs `qmd embed`.
+- Core memory and lexical `memory_search` work without qmd.
+- qmd adds BM25, semantic, and deep search; missing qmd, collections, or embeddings automatically fall back to local lexical matching.
+- Bootstrap attempts to install Bun + qmd and adds `~/.pi/agent/memory` as the `pi-memory` collection. It does not run `qmd embed`; run that manually only when semantic search is needed.
 - After writes, qmd updates run in the background by default; use `PI_MEMORY_QMD_UPDATE=manual` or `off` to change that.
 
 Useful memory environment variables:
@@ -312,7 +312,7 @@ Bootstrap behavior:
 - Creates `~/.pi/agent/memory` and links it into the workspace `.pi/memory` when safe.
 - Optionally initializes the local `~/.pi/agent/evolution` repo for memory/skill-draft snapshots; it never writes tokens or enables auto-push.
 - Links suite skills into the workspace `.pi/skills` when safe.
-- Installs Bun + qmd when possible and initializes the `pi-memory` qmd collection.
+- Installs Bun + qmd when possible and initializes the `pi-memory` qmd collection without automatically running `qmd embed`.
 - Does not auto-enable the external memory curator service; the startup hint explains how to enable it.
 
 ## Recommended Workflows
