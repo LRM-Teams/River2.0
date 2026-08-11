@@ -620,6 +620,10 @@ function envFlag(env: MemoryEnv, name: string): boolean | undefined {
 	return undefined;
 }
 
+export function getMemoryFinalizeEnabled(env: MemoryEnv = process.env): boolean {
+	return envFlag(env, "PI_MEMORY_FINALIZE") ?? true;
+}
+
 export function getMemoryAutoSyncPullOnStart(env: MemoryEnv = process.env): boolean {
 	return envFlag(env, "PI_MEMORY_AUTO_SYNC_PULL_ON_START")
 		?? envFlag(env, "PI_MEMORY_AUTO_SYNC_PULL")
@@ -2331,6 +2335,18 @@ export default function (pi: ExtensionAPI) {
 		if (terminalInputUnsubscribe) {
 			terminalInputUnsubscribe();
 			terminalInputUnsubscribe = null;
+		}
+
+		// Some hosts own the process lifecycle and need shutdown to stay cheap.
+		// This disables every automatic finalization action while leaving explicit
+		// memory tools and normal in-session context injection available.
+		if (!getMemoryFinalizeEnabled()) {
+			exitSummaryReason = null;
+			if (updateTimer) {
+				clearTimeout(updateTimer);
+				updateTimer = null;
+			}
+			return;
 		}
 
 		// Lifecycle transitions are usually not final session exits. By default,

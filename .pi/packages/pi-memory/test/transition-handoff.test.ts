@@ -5,6 +5,7 @@ import {
 	extractStructuredToolEvidenceCandidates,
 	getMemoryAutoSyncPullOnStart,
 	getMemoryAutoSyncUploadOnShutdown,
+	getMemoryFinalizeEnabled,
 	getMemoryLearningMode,
 	getMemorySkillDraftsMode,
 	parseLearningExtractorResponse,
@@ -85,6 +86,16 @@ test("auto sync env flags are opt-in and support aliases", () => {
 	assert.equal(getMemoryAutoSyncUploadOnShutdown({ PI_MEMORY_AUTO_SYNC: "1" }), true);
 	assert.equal(getMemoryAutoSyncPullOnStart({ PI_MEMORY_AUTO_SYNC: "1", PI_MEMORY_AUTO_SYNC_PULL_ON_START: "0" }), false);
 	assert.equal(getMemoryAutoSyncUploadOnShutdown({ PI_MEMORY_AUTO_SYNC_UPLOAD: "yes" }), true);
+});
+
+test("memory finalization is enabled by default and can be disabled explicitly", () => {
+	assert.equal(getMemoryFinalizeEnabled({}), true);
+	assert.equal(getMemoryFinalizeEnabled({ PI_MEMORY_FINALIZE: "on" }), true);
+	assert.equal(getMemoryFinalizeEnabled({ PI_MEMORY_FINALIZE: "1" }), true);
+	assert.equal(getMemoryFinalizeEnabled({ PI_MEMORY_FINALIZE: "off" }), false);
+	assert.equal(getMemoryFinalizeEnabled({ PI_MEMORY_FINALIZE: "0" }), false);
+	assert.equal(getMemoryFinalizeEnabled({ PI_MEMORY_FINALIZE: "false" }), false);
+	assert.equal(getMemoryFinalizeEnabled({ PI_MEMORY_FINALIZE: "unexpected" }), true);
 });
 
 test("learning extractor response accepts only valid review candidates", () => {

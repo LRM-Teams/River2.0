@@ -232,6 +232,8 @@ Local CLI Pi agents can participate in the same Multica loop as hosted/wrapped a
 
 Automatic sync is off by default. Set `PI_MEMORY_AUTO_SYNC_PULL_ON_START=1` (or `PI_MEMORY_AUTO_SYNC_PULL=1`) to pull current-agent deliveries during `session_start`. Set `PI_MEMORY_AUTO_SYNC_UPLOAD_ON_SHUTDOWN=1` (or `PI_MEMORY_AUTO_SYNC_UPLOAD=1`) to upload candidates, profiles, and feedback during `session_shutdown`. `PI_MEMORY_AUTO_SYNC=1` enables both. These best-effort hooks never block startup/shutdown on sync errors.
 
+Set `PI_MEMORY_FINALIZE=off` when the host runtime must keep shutdown cheap. This skips every automatic `session_shutdown` memory action, including transition handoffs, exit summaries, learning extraction, curation, qmd updates, and automatic sync uploads. Explicit memory tools and normal in-session memory context remain available. Finalization is enabled by default.
+
 ### Local Curator Manager Service
 
 The manager service is separate from the standalone daily memory curator. It runs `jhp-pi-memory-curator manager-scan` against the registry and only processes roots marked `dirty`; when there are no dirty roots it exits after a cheap registry check.
@@ -289,6 +291,8 @@ The controller uses a systemd user timer when available and falls back to cron. 
 | `PI_MEMORY_SNAPSHOT` | `stable`, `per-turn` | `stable` | Stable context injection or legacy per-turn rebuild |
 | `PI_MEMORY_QMD_UPDATE` | `background`, `manual`, `off` | `background` | Control qmd update after writes |
 | `PI_MEMORY_NO_SEARCH` | `1` | unset | Disable per-turn search injection |
+| `PI_MEMORY_FINALIZE` | `off`, `0`, `false`, `no` | enabled | Skip every automatic memory finalization action during `session_shutdown` |
+| `PI_MEMORY_BACKGROUND_SHUTDOWN` | `auto`, `on`, `off` | `auto` | Choose detached or synchronous finalization; this does not disable finalization |
 | `PI_MEMORY_SUMMARIZE_TRANSITIONS` | `1`, `true`, `yes`, `on` | unset | Also summarize lifecycle transitions |
 | `PI_MEMORY_LEARNING` | `off`, `review`, `auto-review` | `review` | Control session learning candidate extraction |
 | `PI_MEMORY_LEARNING_MIN_CONFIDENCE` | `low`, `medium`, `high` | `medium` | Minimum extractor confidence to keep |
