@@ -16,7 +16,7 @@ pi install npm:@lebronj/pi-lsp
 Or bootstrap Pi, write the DeepSeek provider, and install the slim suite. The script asks for the API key on the terminal; it does not ship a key.
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.36.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.37.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 Defaults written to `~/.pi/agent/models.json` / `settings.json`:
@@ -54,6 +54,7 @@ Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
   - Backs up existing files to `~/.pi/agent/safety-backups/<date>/` before `write`/`edit` overwrites (first backup of the day per file).
 - Vendored memory, bench-slim by default: `memory_read` + lexical `memory_search` only. Set `PI_MEMORY_BENCH=0` to restore write/curator/share tools. For harness runs also set `PI_MEMORY_FINALIZE=0` and `PI_MEMORY_SKILL_DRAFTS=off` to disable shutdown finalization noise.
 - Companions installed by bootstrap: `pi-web-access`, `@lebronj/pi-lsp`.
+- Reward-only self-evolution loop (`bench/evolve/`): evaluates the harness on a task set for multiple rounds, feeds back only PASS/FAIL/TIMEOUT plus the agent's own traces (never grader output), and evolves `bench/workspace/` (system prompt append, memory card, tool trims, skills) with evidence-backed change manifests falsified by next-round flips. See `bench/evolve/README.md`.
 
 Not installed or loaded:
 

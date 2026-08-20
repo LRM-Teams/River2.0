@@ -20,11 +20,14 @@ A +2 overall on the full 60-task WildClawBench suite is about 1 extra full-pass 
 
 ## Files in Scope
 
+- `.pi/packages/pi-suite/bench/workspace/**` (APPEND_SYSTEM.md, MEMORY.md, config.json, skills/) — preferred surface, same one the evolve.sh loop edits
 - `.pi/packages/pi-suite/profiles/leaderboard.json`
 - `.pi/packages/pi-suite/package.leaderboard.json`
 - `.pi/packages/pi-suite/extensions/update-plan.ts`
 - `.pi/packages/pi-suite/vendor/pi-memory/**` (read-path and tool registration only)
 - Future: Harbor / EvalScope Pi adapter under `bench/harness/`
+
+Reward-only: never read `bench/tasks/*/grade.sh` or quarantine dirs; evidence is `results.json` + agent-owned traces only (see `bench/evolve/README.md`).
 
 ## Off Limits
 

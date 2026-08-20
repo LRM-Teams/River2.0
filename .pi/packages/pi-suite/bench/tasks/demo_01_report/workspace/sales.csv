@@ -1,0 +1,11 @@
+order_id,region,amount
+1001,north,250
+1002,south,120
+1003,north,90
+1004,east,410
+1005,south,300
+1006,east,75
+1007,west,510
+1008,north,220
+1009,west,60
+1010,east,180

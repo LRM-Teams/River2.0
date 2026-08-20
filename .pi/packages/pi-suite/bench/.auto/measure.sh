@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Offline proxy for the autoresearch loop.
-# Replace the echo stubs with a real Harbor / EvalScope smoke run once the Pi
-# harness image exists. Keep this script faster than a full 60-task sweep.
+# Benchmark script for the pi-autoresearch loop (interactive driver).
+# Delegates to the reward-only runner in bench/evolve/ and re-emits its
+# summary as METRIC lines. The unattended alternative is bench/evolve/evolve.sh.
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PROFILE="$ROOT/../profiles/leaderboard.json"
+BENCH="$(cd "$(dirname "$0")/.." && pwd)"
+PROFILE="$BENCH/../profiles/leaderboard.json"
 
 if [[ ! -f "$PROFILE" ]]; then
 	echo "missing leaderboard profile: $PROFILE" >&2
@@ -14,26 +14,20 @@ if [[ ! -f "$PROFILE" ]]; then
 fi
 
 # Cheap structural pre-check: the eval profile must stay slim.
-disabled="$(python3 - <<'PY' "$PROFILE"
-import json, sys
-profile = json.load(open(sys.argv[1]))
-print(len(profile["eval"]["disable"]))
-PY
-)"
-
+disabled="$(node -e 'console.log(require(process.argv[1]).eval.disable.length)' "$PROFILE")"
 if [[ "$disabled" -lt 8 ]]; then
 	echo "leaderboard profile looks too fat (disable count=$disabled)" >&2
 	exit 1
 fi
 
-# TODO: harbor run --agent pi --dataset internlm/WildClawBench-Harbor --n 8
-# TODO: evalscope eval --suite claw-eval --split general --limit 12 --pass-k 1
-proxy_score="${PROXY_SCORE:-0}"
-wall_min="${PROXY_WALL_MIN:-0}"
-tool_calls="${PROXY_TOOL_CALLS:-0}"
-safety_fail="${PROXY_SAFETY_FAIL:-0}"
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/pi-bench-measure.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
 
-echo "METRIC proxy_score=${proxy_score}"
-echo "METRIC wall_min=${wall_min}"
-echo "METRIC tool_calls=${tool_calls}"
-echo "METRIC safety_fail=${safety_fail}"
+summary="$("$BENCH/evolve/run-tasks.sh" "$OUT" | tee /dev/stderr | grep '^SUMMARY ' | tail -1)"
+
+get() { sed -n "s/.*$1=\([0-9.]*\).*/\1/p" <<<"$summary"; }
+
+echo "METRIC proxy_score=$(get pass_rate)"
+echo "METRIC wall_min=$(get wall_min)"
+echo "METRIC tool_calls=$(get tool_calls)"
+echo "METRIC safety_fail=$(get safety_fail)"
