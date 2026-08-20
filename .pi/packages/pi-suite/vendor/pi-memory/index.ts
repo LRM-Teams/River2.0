@@ -2282,6 +2282,19 @@ export function _resetMemorySnapshot() {
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+	const benchMode = process.env.PI_MEMORY_BENCH !== "0";
+	if (benchMode) {
+		const allowedTools = new Set(["memory_read", "memory_search"]);
+		const registerTool = pi.registerTool.bind(pi);
+		pi.registerTool = ((tool: Parameters<ExtensionAPI["registerTool"]>[0]) => {
+			if (!allowedTools.has(tool.name)) return;
+			return registerTool(tool);
+		}) as ExtensionAPI["registerTool"];
+		pi.registerCommand = ((_name: string, _spec: Parameters<ExtensionAPI["registerCommand"]>[1]) => {
+			return undefined as ReturnType<ExtensionAPI["registerCommand"]>;
+		}) as ExtensionAPI["registerCommand"];
+	}
+
 	// --- session_start: detect qmd, auto-setup collection ---
 	pi.on("session_start", async (_event, ctx) => {
 		refreshResolvedDirsFromEnv();
@@ -2300,7 +2313,7 @@ export default function (pi: ExtensionAPI) {
 				exitSummaryReason = "ctrl+d";
 				return undefined;
 			});
-			if (process.env.PI_MEMORY_REVIEW_STARTUP_HINT !== "0") {
+			if (!benchMode && process.env.PI_MEMORY_REVIEW_STARTUP_HINT !== "0") {
 				const reviewText = readFileSafe(REVIEW_FILE) ?? "";
 				const pending = countPendingReviewItems(reviewText);
 				const candidates = countReviewCandidates(reviewText);
@@ -2312,9 +2325,9 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		qmdAvailable = await detectQmd();
+		qmdAvailable = benchMode ? false : await detectQmd();
 		if (!qmdAvailable) {
-			if (ctx.hasUI) {
+			if (ctx.hasUI && !benchMode) {
 				ctx.ui.notify(qmdInstallInstructions(), "info");
 			}
 			refreshMemorySnapshot("session_start");

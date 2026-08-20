@@ -1,7 +1,7 @@
 {
   "name": "@lebronj/pi-suite",
-  "version": "0.1.33",
-  "description": "JHP's Pi extension suite for team coding workflows",
+  "version": "0.1.36",
+  "description": "Slim Pi suite for WildClawBench / Claw-Eval: update_plan, bench-slim memory, gemini vision/media tools, safety gate.",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -14,11 +14,13 @@
   "author": "JHP",
   "license": "MIT",
   "files": [
-    "extensions",
-    "prompts",
-    "skills",
+    "extensions/update-plan.ts",
+    "extensions/safety-gate.ts",
+    "extensions/media-tools.ts",
     "scripts",
     "vendor",
+    "profiles",
+    "bench",
     "README.md",
     "LICENSE"
   ],
@@ -48,14 +50,10 @@
   },
   "pi": {
     "extensions": [
-      "./extensions",
+      "./extensions/update-plan.ts",
+      "./extensions/safety-gate.ts",
+      "./extensions/media-tools.ts",
       "./vendor/pi-memory/index.ts"
-    ],
-    "prompts": [
-      "./prompts"
-    ],
-    "skills": [
-      "./skills"
     ]
   },
   "publishConfig": {

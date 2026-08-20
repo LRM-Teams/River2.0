@@ -16,9 +16,8 @@ interface RepairRequirement {
 }
 
 const REQUIRED_PACKAGES: RepairRequirement[] = [
-	{ source: "npm:pi-mcp-adapter", description: "MCP tools" },
-	{ source: "npm:pi-subagents", description: "subagent delegation" },
 	{ source: "npm:pi-web-access", description: "web search/content tools" },
+	{ source: "npm:@lebronj/pi-lsp", description: "optional code intelligence" },
 ];
 
 function readSettings(path: string): SettingsFile | undefined {

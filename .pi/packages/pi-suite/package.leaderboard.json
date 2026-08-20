@@ -1,0 +1,29 @@
+{
+  "name": "@lebronj/pi-suite",
+  "version": "0.1.36",
+  "description": "Slim Pi suite for WildClawBench / Claw-Eval: update_plan, bench-slim memory, gemini vision/media tools, safety gate.",
+  "type": "module",
+  "author": "JHP",
+  "license": "MIT",
+  "files": [
+    "extensions/update-plan.ts",
+    "extensions/safety-gate.ts",
+    "extensions/media-tools.ts",
+    "vendor",
+    "profiles",
+    "bench",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/update-plan.ts",
+      "./extensions/safety-gate.ts",
+      "./extensions/media-tools.ts",
+      "./vendor/pi-memory/index.ts"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

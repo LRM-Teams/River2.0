@@ -1,8 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TEAM_BASE_URL="${TEAM_BASE_URL:-https://claude-code.club/openai/v1}"
-TEAM_MODEL="${TEAM_MODEL:-gpt-5.5}"
+# Leaderboard / default install: Lenovo ModelFactory DeepSeek.
+# Bench profile: TEAM_PROFILE=zhizengzeng (GPT-5.5 main + Gemini vision via api.zhizengzeng.com).
+# Legacy team endpoint is kept in bootstrap.legacy.sh (main leftover).
+TEAM_PROFILE="${TEAM_PROFILE:-deepseek}"
+if [ "$TEAM_PROFILE" = "legacy" ]; then
+  exec "$(cd "$(dirname "$0")" && pwd)/bootstrap.legacy.sh"
+fi
+
+if [ "$TEAM_PROFILE" = "zhizengzeng" ]; then
+  TEAM_PROVIDER="${TEAM_PROVIDER:-zhizengzeng}"
+  TEAM_BASE_URL="${TEAM_BASE_URL:-https://api.zhizengzeng.com/v1}"
+  TEAM_MODEL="${TEAM_MODEL:-gpt-5.5}"
+  TEAM_MODEL_NAME="${TEAM_MODEL_NAME:-GPT-5.5 (Zhizengzeng)}"
+  TEAM_API="${TEAM_API:-openai-responses}"
+else
+  TEAM_PROVIDER="${TEAM_PROVIDER:-lenovo-deepseek-v4-flash}"
+  TEAM_BASE_URL="${TEAM_BASE_URL:-https://modelfactory.lenovo.com/service-large-600-1777255649450/llm/v1}"
+  TEAM_MODEL="${TEAM_MODEL:-DeepSeek-V4-Flash-0731}"
+  TEAM_MODEL_NAME="${TEAM_MODEL_NAME:-Lenovo ModelFactory DeepSeek V4 Flash}"
+  TEAM_API="${TEAM_API:-openai-completions}"
+fi
 PI_SUITE="${PI_SUITE:-npm:@lebronj/pi-suite}"
 
 if ! command -v npm >/dev/null 2>&1; then
@@ -40,9 +59,16 @@ prompt_secret() {
   printf -v "$var_name" '%s' "$value"
 }
 
-TEAM_API_KEY="${TEAM_API_KEY:-}"
-if [ -z "$TEAM_API_KEY" ]; then
-  prompt_secret "OpenAI-compatible API key" TEAM_API_KEY
+if [ "$TEAM_PROFILE" = "zhizengzeng" ]; then
+  TEAM_API_KEY="${TEAM_API_KEY:-${ZHIZENGZENG_API_KEY:-}}"
+  if [ -z "$TEAM_API_KEY" ]; then
+    prompt_secret "Zhizengzeng API key" TEAM_API_KEY
+  fi
+else
+  TEAM_API_KEY="${TEAM_API_KEY:-${LENOVO_DEEPSEEK_V4_FLASH_API_KEY:-}}"
+  if [ -z "$TEAM_API_KEY" ]; then
+    prompt_secret "DeepSeek / ModelFactory API key" TEAM_API_KEY
+  fi
 fi
 
 echo "Installing Pi CLI..."
@@ -54,26 +80,121 @@ mkdir -p "$AGENT_DIR"
 MODELS_FILE="$AGENT_DIR/models.json"
 SETTINGS_FILE="$AGENT_DIR/settings.json"
 
-MODELS_FILE="$MODELS_FILE" TEAM_BASE_URL="$TEAM_BASE_URL" TEAM_API_KEY="$TEAM_API_KEY" node <<'NODE'
+MODELS_FILE="$MODELS_FILE" \
+TEAM_PROFILE="$TEAM_PROFILE" \
+TEAM_PROVIDER="$TEAM_PROVIDER" \
+TEAM_BASE_URL="$TEAM_BASE_URL" \
+TEAM_API_KEY="$TEAM_API_KEY" \
+TEAM_API="$TEAM_API" \
+TEAM_MODEL="$TEAM_MODEL" \
+TEAM_MODEL_NAME="$TEAM_MODEL_NAME" \
+node <<'NODE'
 const fs = require("node:fs");
 const path = process.env.MODELS_FILE;
 const current = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : {};
 const providers = current.providers && typeof current.providers === "object" ? current.providers : {};
-providers.openai = {
-  ...(providers.openai && typeof providers.openai === "object" ? providers.openai : {}),
-  baseUrl: process.env.TEAM_BASE_URL,
-  apiKey: process.env.TEAM_API_KEY,
-};
+const name = process.env.TEAM_PROVIDER;
+const prev = providers[name] && typeof providers[name] === "object" ? providers[name] : {};
+if (process.env.TEAM_PROFILE === "zhizengzeng") {
+  // GPT-5.5 main control (Responses API: chat completions rejects tools + reasoning_effort),
+  // plus Gemini vision for the media-tools extension and manual fallback.
+  providers[name] = {
+    ...prev,
+    baseUrl: process.env.TEAM_BASE_URL,
+    api: "openai-completions",
+    apiKey: process.env.TEAM_API_KEY,
+    compat: { supportsStore: false },
+    models: [
+      {
+        id: "gpt-5.5",
+        name: "GPT-5.5 (Zhizengzeng)",
+        api: "openai-responses",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 400000,
+        maxTokens: 65536,
+      },
+      {
+        id: "gpt-5.5-pro",
+        name: "GPT-5.5 Pro (Zhizengzeng)",
+        api: "openai-responses",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 400000,
+        maxTokens: 65536,
+      },
+      {
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro Vision (Zhizengzeng)",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 1000000,
+        maxTokens: 65536,
+        compat: {
+          maxTokensField: "max_tokens",
+          supportsReasoningEffort: false,
+          supportsDeveloperRole: false,
+        },
+      },
+    ],
+  };
+} else {
+  providers[name] = {
+    ...prev,
+    baseUrl: process.env.TEAM_BASE_URL,
+    api: process.env.TEAM_API,
+    apiKey: process.env.TEAM_API_KEY,
+    authHeader: true,
+    compat: {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsStore: false,
+      maxTokensField: "max_tokens",
+      ...(prev.compat && typeof prev.compat === "object" ? prev.compat : {}),
+    },
+    models: [
+      {
+        id: process.env.TEAM_MODEL,
+        name: process.env.TEAM_MODEL_NAME,
+        reasoning: false,
+        input: ["text"],
+        contextWindow: 524288,
+        maxTokens: 4096,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+    ],
+  };
+}
 fs.writeFileSync(path, `${JSON.stringify({ ...current, providers }, null, 2)}\n`);
 NODE
 
-SETTINGS_FILE="$SETTINGS_FILE" TEAM_MODEL="$TEAM_MODEL" node <<'NODE'
+# media-tools (gemini_vision) reads its key from ~/.pi/agent/media-tools.json or ZHIZENGZENG_API_KEY.
+if [ "$TEAM_PROFILE" = "zhizengzeng" ] && [ ! -f "$AGENT_DIR/media-tools.json" ]; then
+  MEDIA_TOOLS_FILE="$AGENT_DIR/media-tools.json" TEAM_API_KEY="$TEAM_API_KEY" node <<'NODE'
+const fs = require("node:fs");
+fs.writeFileSync(
+  process.env.MEDIA_TOOLS_FILE,
+  `${JSON.stringify(
+    {
+      apiKey: process.env.TEAM_API_KEY,
+      baseUrl: "https://api.zhizengzeng.com",
+      visionModel: "gemini-3.1-pro-preview",
+    },
+    null,
+    2,
+  )}\n`,
+);
+NODE
+  echo "Wrote $AGENT_DIR/media-tools.json for gemini_vision."
+fi
+
+SETTINGS_FILE="$SETTINGS_FILE" TEAM_PROVIDER="$TEAM_PROVIDER" TEAM_MODEL="$TEAM_MODEL" node <<'NODE'
 const fs = require("node:fs");
 const path = process.env.SETTINGS_FILE;
 const current = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : {};
 const next = {
   ...current,
-  defaultProvider: "openai",
+  defaultProvider: process.env.TEAM_PROVIDER,
   defaultModel: process.env.TEAM_MODEL,
   theme: current.theme ?? "light",
 };
@@ -84,9 +205,8 @@ echo "Installing Pi extension suite: $PI_SUITE"
 pi install "$PI_SUITE"
 
 COMPANION_PACKAGES=(
-  "npm:pi-mcp-adapter"
-  "npm:pi-subagents"
   "npm:pi-web-access"
+  "npm:@lebronj/pi-lsp"
 )
 
 echo "Installing Pi companion packages..."
@@ -127,11 +247,9 @@ EVOLUTION_DIR="${PI_EVOLUTION_DIR:-$AGENT_DIR/evolution}"
 EVOLUTION_REMOTE="${PI_EVOLUTION_REMOTE:-}"
 LEGACY_SHARED_EVOLUTION_REMOTE="https://github.com/LRM-Teams/pi-evolution.git"
 EVOLUTION_BRANCH="${PI_EVOLUTION_BRANCH:-main}"
-SUITE_SKILLS_DIR="${PI_SUITE_SKILLS_DIR:-$AGENT_DIR/npm/node_modules/@lebronj/pi-suite/skills}"
 
 mkdir -p "$MEMORY_DIR"
 link_if_safe "$MEMORY_DIR" "$WORKSPACE_PI_DIR/memory" "memory"
-link_if_safe "$SUITE_SKILLS_DIR" "$WORKSPACE_PI_DIR/skills" "skills"
 
 setup_evolution_repo() {
   if [ "${PI_EVOLUTION_ENABLED:-1}" = "0" ]; then
@@ -172,65 +290,25 @@ setup_evolution_repo() {
   fi
   mkdir -p "$EVOLUTION_DIR/memory" "$EVOLUTION_DIR/skill-drafts" "$EVOLUTION_DIR/snapshots" "$EVOLUTION_DIR/manifests"
   echo "Memory evolution repo ready: $EVOLUTION_DIR"
-  if [ -n "$EVOLUTION_REMOTE" ]; then
-    echo "Remote: $EVOLUTION_REMOTE"
-    echo "Auto push remains off by default. Use /memory-version-push or PI_EVOLUTION_AUTO_PUSH=1."
-  else
-    echo "Remote: none (local-only by default). Set PI_EVOLUTION_REMOTE to a personal private repo if you want backup sync."
-  fi
 }
 
 setup_evolution_repo
 
-ensure_bun() {
-  if command -v bun >/dev/null 2>&1; then
-    return 0
-  fi
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "curl is required to auto-install Bun for qmd." >&2
-    return 1
-  fi
-
-  echo "Installing Bun for qmd..."
-  curl -fsSL https://bun.sh/install | bash
-  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
-  export PATH="$BUN_INSTALL/bin:$PATH"
-
-  command -v bun >/dev/null 2>&1
-}
-
-echo "Setting up qmd for memory_search..."
-if ensure_bun; then
-  bun install -g https://github.com/tobi/qmd
-  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
-  export PATH="$BUN_INSTALL/bin:$PATH"
-  mkdir -p "$HOME/.pi/agent/memory"
-  if command -v qmd >/dev/null 2>&1; then
-    qmd collection add "$HOME/.pi/agent/memory" --name pi-memory || true
-    echo "qmd collection ready. Run 'qmd embed' later if you need semantic memory_search."
-  else
-    echo "qmd was installed but is not on PATH. Add ~/.bun/bin to PATH, then run qmd embed."
-  fi
-else
-  cat <<'MSG'
-Could not auto-install Bun, so qmd setup was skipped.
-Core memory tools still work, but memory_search needs qmd.
-Install later with:
-  curl -fsSL https://bun.sh/install | bash
-  bun install -g https://github.com/tobi/qmd
-  qmd collection add ~/.pi/agent/memory --name pi-memory
-  qmd embed
-MSG
-fi
+echo "Skipping qmd auto-install on the leaderboard profile. memory_search uses lexical fallback."
+echo "Set PI_MEMORY_BENCH=0 and install qmd later if you want semantic search."
 
 cat <<MSG
 Done.
-Provider: openai
+Profile: $TEAM_PROFILE
+Provider: $TEAM_PROVIDER
 Base URL: $TEAM_BASE_URL
 Model: $TEAM_MODEL
+Companions: pi-web-access, @lebronj/pi-lsp
+Suite extensions: update_plan, gemini_vision/video_frames/image_crop/media_probe, safety-gate
+Not installed: pet/snake/tps, autogoal/goal-mode, pi-subagents, Figma
+Bench tip: export PI_MEMORY_FINALIZE=0 PI_MEMORY_SKILL_DRAFTS=off in the harness.
 Run: pi
 
-Optional Figma tools are not installed by default.
-Enable later with: pi install npm:pi-mono-figma
-Disable later with: pi remove npm:pi-mono-figma
+Bench profile (GPT-5.5 + Gemini vision): TEAM_PROFILE=zhizengzeng $0
+Legacy team endpoint (claude-code.club / gpt-5.5): TEAM_PROFILE=legacy $0
 MSG

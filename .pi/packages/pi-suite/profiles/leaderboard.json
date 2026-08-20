@@ -1,0 +1,47 @@
+{
+	"name": "leaderboard",
+	"target": ["wildclawbench", "claw-eval"],
+	"compare": "openclaw",
+	"goal": {
+		"metric": "overall_score",
+		"direction": "higher",
+		"delta": 0.02,
+		"note": "Absolute +2 points vs the same model on OpenClaw, not relative 2% of our score."
+	},
+	"eval": {
+		"enable": [
+			"extensions/update-plan.ts",
+			"vendor/pi-memory/index.ts"
+		],
+		"companions": [
+			"pi-web-access",
+			"pi-lsp",
+			"pi-playwright"
+		],
+		"disable": [
+			"extensions/pet.ts",
+			"extensions/snake.ts",
+			"extensions/tps.ts",
+			"extensions/prompt-url-widget.ts",
+			"extensions/autogoal.ts",
+			"extensions/goal-mode.ts",
+			"extensions/pi-suite-repair.ts",
+			"prompts/cl.md",
+			"prompts/commit.md",
+			"prompts/is.md",
+			"prompts/pr.md",
+			"prompts/review.md",
+			"prompts/wr.md",
+			"skills/skill-creator",
+			"skills/add-llm-provider",
+			"skills/image-to-editable-ppt-slide",
+			"skills/pi-skill"
+		],
+		"memoryTools": ["memory_read", "memory_search"],
+		"doNotInstallDuringEval": ["pi-autoresearch", "pi-subagents", "pi-mono-figma"]
+	},
+	"evolve": {
+		"enable": ["pi-autoresearch", "extensions/autogoal.ts", "skills/skill-creator"],
+		"loop": "bench/.auto"
+	}
+}

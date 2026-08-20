@@ -1,57 +1,70 @@
 # @lebronj/pi-suite
 
-JHP's Pi extension suite for team coding workflows.
+Slim Pi suite for WildClawBench / Claw-Eval. Default install profile is Lenovo ModelFactory DeepSeek; the bench profile (`TEAM_PROFILE=zhizengzeng`) provisions GPT-5.5 as the main model plus Gemini vision tools.
+
+Team toys (pet / snake / TPS), autogoal / goal-mode, git prompts, and subagents are **not** loaded on this branch. See `docs/bench/LEADERBOARD.md`.
 
 ## Install
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 pi install npm:@lebronj/pi-suite
-pi install npm:pi-mcp-adapter
-pi install npm:pi-subagents
 pi install npm:pi-web-access
+pi install npm:@lebronj/pi-lsp
 ```
 
-Or use the bootstrap script to install Pi, configure the team OpenAI-compatible endpoint, install this suite, and set up Bun + qmd for memory search:
+Or bootstrap Pi, write the DeepSeek provider, and install the slim suite. The script asks for the API key on the terminal; it does not ship a key.
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.33.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.36.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
+
+Defaults written to `~/.pi/agent/models.json` / `settings.json`:
+
+- Provider: `lenovo-deepseek-v4-flash`
+- Base URL: `https://modelfactory.lenovo.com/service-large-600-1777255649450/llm/v1`
+- API: `openai-completions`
+- Default model: `DeepSeek-V4-Flash-0731`
+
+Override with `TEAM_BASE_URL`, `TEAM_MODEL`, or `TEAM_API_KEY`. Old claude-code.club / gpt-5.5 leftover: `TEAM_PROFILE=legacy` (see `scripts/bootstrap.legacy.sh`).
+
+### Bench profile: GPT-5.5 + Gemini vision
+
+```bash
+TEAM_PROFILE=zhizengzeng ZHIZENGZENG_API_KEY=sk-... bash scripts/bootstrap.sh
+```
+
+Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
+
+- `gpt-5.5` / `gpt-5.5-pro` — main control, Responses API (chat completions rejects tools + `reasoning_effort` for these models), text+image input.
+- `gemini-3.1-pro-preview` — vision fallback model, chat completions.
+- `~/.pi/agent/media-tools.json` — key + base URL for the `gemini_vision` tool below.
 
 ## What Is Included
 
-- Local extensions: autogoal, goal mode, update_plan, pet, prompt URL widget, snake, TPS notifications.
-- Prompts: changelog audit, issue analysis, PR review, review workflow, commit workflow, wrap workflow.
-- Skills: provider checklist, skill-creation workflow, Pi capability reference, image-to-editable-PPT workflow.
-- Vendored package: `@jhp/pi-memory`, including qmd search, external curator service, memory/skill-draft versioning, scoped Multica agent roots, review reminders, and local memory/skill self-evolution queues.
+- `update_plan` for long-horizon checklists.
+- Media tools (`extensions/media-tools.ts`), backed by Zhizengzeng's Google-native gateway (`/google/v1beta`):
+  - `gemini_vision(paths, question)` — images, whole videos (audio track included, timestamp-aware, MM:SS), and audio files. Oversized videos are transcoded down with ffmpeg; frame sampling is the last resort. `smartCrop=true` zooms into the relevant image region (two-pass crop-and-reask). `startSeconds`/`durationSeconds` clip long videos.
+  - `video_frames` — extract frames to files: fixed interval, exact timestamps, or scene-change detection.
+  - `image_crop` — crop/resize an image with ffmpeg.
+  - `media_probe` — ffprobe metadata (duration, resolution, codecs, fps).
+  - Requires `ffmpeg`/`ffprobe` on PATH. Key resolution: `ZHIZENGZENG_API_KEY` env, then `~/.pi/agent/media-tools.json`. Known gateway limits: OpenAI-format `video_url` does not deliver video; the Files API upload returns 500 — hence inline + transcode.
+- Safety gate (`extensions/safety-gate.ts`), model-agnostic bench rails:
+  - Blocks `rm -rf` on root/home/cwd, `mkfs`, `dd` to devices, fork bombs, force pushes, `curl|sh` remote-code execution, runtime `pi install`, and executing/sourcing workspace `SKILL.md` files.
+  - Backs up existing files to `~/.pi/agent/safety-backups/<date>/` before `write`/`edit` overwrites (first backup of the day per file).
+- Vendored memory, bench-slim by default: `memory_read` + lexical `memory_search` only. Set `PI_MEMORY_BENCH=0` to restore write/curator/share tools. For harness runs also set `PI_MEMORY_FINALIZE=0` and `PI_MEMORY_SKILL_DRAFTS=off` to disable shutdown finalization noise.
+- Companions installed by bootstrap: `pi-web-access`, `@lebronj/pi-lsp`.
 
-Install the companion packages above with the suite so MCP, subagent, and web tools register from their own package manifests. The bootstrap script installs the same companion packages automatically.
+Not installed or loaded:
 
-Do not add those companion packages inside the `@lebronj/pi-suite` manifest at the same time; loading them both from the suite manifest and as standalone Pi packages creates duplicate tool/flag registration conflicts.
+- pet, snake, TPS, prompt URL widget
+- autogoal, goal-mode, pi-suite-repair
+- team git prompts and skill-creator / PPT / pi-skill dumps
+- `pi-subagents`, `pi-mcp-adapter`, `pi-mono-figma`
 
-Existing users can run `pi update --extensions`; if Pi reports missing suite companion packages on startup, run `/pi-suite-repair` and it will install or refresh the currently required companion package set, then reload resources.
+Do not also list those companions inside this package manifest; duplicates conflict.
 
-Figma is not installed or loaded by default. Enable it only when needed:
-
-```bash
-pi install npm:pi-mono-figma
-# then run /reload or restart pi
-```
-
-Disable Figma later with:
-
-```bash
-pi remove npm:pi-mono-figma
-# then run /reload or restart pi
-```
-
-Debug-only extensions are intentionally excluded:
-
-- `dump-system-prompt.ts`
-- `zz-full-session-log.ts`
-- `agentmemory`
-
-## Autogoal
+## Autogoal (not loaded on this branch; leftover from main)
 
 `/autogoal <task>` starts a bounded autonomous coding run. It persists the objective, auto-continues with loop budgets, checkpoints at high context usage, and can continue in a fresh session when the context window gets tight.
 
@@ -86,15 +99,15 @@ Useful commands:
 /plan-clear
 ```
 
-## Team Model Setup
+## Default Model Setup
 
-The bootstrap script can be run with `curl | bash`: it reads the API key from the terminal instead of stdin. It asks for an API key and writes:
+Bootstrap writes the Lenovo DeepSeek provider above. The API key is entered at install time and stays on the user's machine. Do not publish a shared key in this package.
 
-- Provider: OpenAI-compatible `openai`
-- Base URL: `https://claude-code.club/openai/v1`
-- Default model: `gpt-5.5`
+Old team endpoint leftover (main):
 
-The API key is written to `~/.pi/agent/models.json` on the user's machine. Do not publish a shared key in this package.
+```bash
+TEAM_PROFILE=legacy bash scripts/bootstrap.legacy.sh
+```
 
 ## Memory And Versioning
 
@@ -146,7 +159,7 @@ Use `/commit [message|split|pr|apply]` to inspect current changes, warn about mi
 
 These workflows are prompt-template workflows only. They do not merge read behavior, add tool discovery, rewrite memory/skills, or run as hidden background processes.
 
-## Goal Mode
+## Goal Mode (not loaded on this branch; leftover from main)
 
 Use `/goal <objective>` to keep Pi working on one task until it is verified complete. Goal mode injects hidden task context, enables a `goal` tool for pause/drop/resume/completion, tracks token/time budget usage, and auto-continues between turns instead of stopping at a minimal implementation.
 
