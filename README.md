@@ -58,6 +58,12 @@ npm run check        # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
+> **Troubleshooting:** `npm install` and `npm run build` are both required before
+> `./pi-test.sh`. On a fresh clone without `packages/*/dist`, extension loading
+> fails with errors like `Cannot find module '.../packages/ai/src/index.ts/base'`
+> — the loader aliases `@earendil-works/pi-*` imports to the built `dist/` files.
+> `pi-test.sh` now checks this and tells you which step is missing.
+
 ## Supply-chain hardening
 
 We treat npm dependency changes as reviewed code changes.

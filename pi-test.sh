@@ -4,6 +4,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PI_CODING_AGENT_DIR="$SCRIPT_DIR/.pi/agent"
 
+# Fail fast with a clear message instead of cryptic module-resolution errors
+# (e.g. "Cannot find module .../packages/ai/src/index.ts/base") when the
+# workspace was cloned but never installed/built.
+if [[ ! -x "$SCRIPT_DIR/node_modules/.bin/tsx" ]]; then
+  echo "error: dependencies not installed. Run in the repo root:" >&2
+  echo "  npm install --ignore-scripts" >&2
+  exit 1
+fi
+if [[ ! -f "$SCRIPT_DIR/packages/ai/dist/index.js" || ! -f "$SCRIPT_DIR/packages/agent/dist/index.js" ]]; then
+  echo "error: workspace packages not built (packages/*/dist missing)." >&2
+  echo "Extensions resolve @earendil-works/pi-* against dist/. Run in the repo root:" >&2
+  echo "  npm run build" >&2
+  exit 1
+fi
+
 # Check for --no-env flag
 NO_ENV=false
 ARGS=()
