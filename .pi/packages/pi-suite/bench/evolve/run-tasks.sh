@@ -56,7 +56,9 @@ THINKING="$(node -e 'const c=require(process.argv[1]);process.stdout.write(c.thi
 EXCLUDE_TOOLS="$(node -e 'const c=require(process.argv[1]);process.stdout.write((c.excludeTools||[]).join(","))' "$CFG" 2>/dev/null || true)"
 
 # Note: sessions must be saved (they are the agent-owned trace we feed back).
-PI_ARGS=(-p)
+# --offline disables startup network ops (update checks) that can stall
+# detached runs; in-task web tools are unaffected.
+PI_ARGS=(-p --offline)
 [ -n "${PI_BENCH_PROVIDER:-}" ] && PI_ARGS+=(--provider "$PI_BENCH_PROVIDER")
 [ -n "${PI_BENCH_MODEL:-}" ] && PI_ARGS+=(--model "$PI_BENCH_MODEL")
 [ -n "$THINKING" ] && PI_ARGS+=(--thinking "$THINKING")

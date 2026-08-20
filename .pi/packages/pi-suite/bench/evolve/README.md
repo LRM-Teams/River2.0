@@ -56,6 +56,18 @@ Design sources:
 
 ## Usage
 
+Inside pi (extension `extensions/bench.ts`, evolve machine only):
+
+```
+/bench tasks              list task dirs
+/bench run [task ...]     one-off eval in the background
+/bench evolve [N]         start the self-evolution loop (default 5 iterations)
+/bench                    status: running process, latest results, history tail
+/bench stop               kill the running eval/evolve session
+```
+
+From the shell:
+
 ```bash
 cd .pi/packages/pi-suite/bench/evolve
 

@@ -19,6 +19,7 @@
 			"pi-playwright"
 		],
 		"disable": [
+			"extensions/bench.ts",
 			"extensions/pet.ts",
 			"extensions/snake.ts",
 			"extensions/tps.ts",
