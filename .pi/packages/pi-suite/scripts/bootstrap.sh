@@ -188,6 +188,36 @@ NODE
   echo "Wrote $AGENT_DIR/media-tools.json for gemini_vision."
 fi
 
+# pi-web-access: enable jina (r.jina.ai) as a fetch fallback after http/Readability
+# fails (403 / anti-bot / JS-rendered pages). pi-web-access resolves web-search.json
+# as $PI_CODING_AGENT_DIR, else $XDG_CONFIG_HOME/pi, else ~/.pi — mirror that here.
+# Preserves any existing keys so the script stays idempotent across re-runs.
+if [ -n "${PI_CODING_AGENT_DIR:-}" ]; then
+  WEB_SEARCH_DIR="$PI_CODING_AGENT_DIR"
+elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+  WEB_SEARCH_DIR="$XDG_CONFIG_HOME/pi"
+else
+  WEB_SEARCH_DIR="$HOME/.pi"
+fi
+WEB_SEARCH_FILE="$WEB_SEARCH_DIR/web-search.json"
+if [ ! -f "$WEB_SEARCH_FILE" ]; then
+  mkdir -p "$WEB_SEARCH_DIR"
+  cat > "$WEB_SEARCH_FILE" <<'JSON'
+{
+  "searchRouting": {
+    "providers": ["serper", "jina"],
+    "fallbackOn": ["transient", "quota", "network"]
+  },
+  "fetchRouting": {
+    "allowRemoteHostedProviders": true,
+    "providers": ["http", "firecrawl", "jina", "tinyfish", "search1api"]
+  },
+  "workflow": "none"
+}
+JSON
+  echo "Wrote $WEB_SEARCH_FILE (jina fetch fallback enabled)."
+fi
+
 SETTINGS_FILE="$SETTINGS_FILE" TEAM_PROVIDER="$TEAM_PROVIDER" TEAM_MODEL="$TEAM_MODEL" node <<'NODE'
 const fs = require("node:fs");
 const path = process.env.SETTINGS_FILE;
