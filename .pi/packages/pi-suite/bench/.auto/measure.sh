@@ -27,7 +27,8 @@ summary="$("$BENCH/evolve/run-tasks.sh" "$OUT" | tee /dev/stderr | grep '^SUMMAR
 
 get() { sed -n "s/.*$1=\([0-9.]*\).*/\1/p" <<<"$summary"; }
 
-echo "METRIC proxy_score=$(get pass_rate)"
+overall_score="$(get overall_score)"
+echo "METRIC proxy_score=$(awk -v score="$overall_score" 'BEGIN { printf "%.2f", score * 100 }')"
 echo "METRIC wall_min=$(get wall_min)"
 echo "METRIC tool_calls=$(get tool_calls)"
 echo "METRIC safety_fail=$(get safety_fail)"

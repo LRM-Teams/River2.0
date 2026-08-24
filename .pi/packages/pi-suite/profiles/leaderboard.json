@@ -11,6 +11,9 @@
 	"eval": {
 		"enable": [
 			"extensions/update-plan.ts",
+			"extensions/bench-control.ts",
+			"extensions/safety-gate.ts",
+			"extensions/media-tools.ts",
 			"vendor/pi-memory/index.ts"
 		],
 		"companions": [

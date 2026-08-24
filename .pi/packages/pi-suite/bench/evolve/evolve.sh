@@ -7,7 +7,7 @@ set -euo pipefail
 #
 # Each iteration:
 #   1. run-tasks.sh evaluates the current bench/workspace harness on the task
-#      set (reward-only: pass/fail/timeout + agent-owned traces).
+#      set (reward-only: scalar score/status + agent-owned traces/manifests).
 #   2. A flip table vs the previous iteration is computed and the previous
 #      change_manifest.json predictions are surfaced for falsification.
 #   3. pi (the evolve agent) reads evolve-prompt.md + the iteration query and
@@ -53,12 +53,12 @@ commit_workspace() { # message
 	git -C "$BENCH_DIR" commit -m "$1" >/dev/null && echo "committed: $1"
 }
 
-pass_rate_of() { # results.json -> integer percent (echo)
+score_rate_of() { # results.json -> rounded mean scalar reward as percent
 	node -e '
 const r = require(process.argv[1]);
-const t = Object.values(r).filter((x) => ["pass", "fail", "timeout"].includes(x.status));
-const p = t.filter((x) => x.status === "pass").length;
-process.stdout.write(t.length ? String(Math.round((100 * p) / t.length)) : "0");
+const t = Object.values(r).filter((x) => ["pass", "fail"].includes(x.status));
+const score = t.reduce((sum, result) => sum + (Number(result.overall_score) || 0), 0);
+process.stdout.write(t.length ? String(Math.round((100 * score) / t.length)) : "0");
 ' "$1"
 }
 
@@ -73,8 +73,8 @@ for ((i = START_ITER; i < START_ITER + ITERATIONS; i++)); do
 	commit_workspace "bench-evolve: snapshot before $iter eval"
 	TASKS_DIR="$TASKS_DIR" "$EVOLVE_DIR/run-tasks.sh" "$iter_dir" | tee "$iter_dir/eval.log"
 
-	rate="$(pass_rate_of "$iter_dir/results.json")"
-	echo "pass rate: ${rate}%"
+	rate="$(score_rate_of "$iter_dir/results.json")"
+	echo "mean scalar reward: ${rate}%"
 	if [ -n "$TARGET" ] && [ "$rate" -ge "$TARGET" ]; then
 		echo "target ${TARGET}% reached — stopping."
 		break
@@ -93,7 +93,7 @@ for ((i = START_ITER; i < START_ITER + ITERATIONS; i++)); do
 	if [ ! -f "$iter_dir/change_manifest.json" ]; then
 		echo "warning: evolve agent wrote no change_manifest.json for $iter" >&2
 	fi
-	commit_workspace "bench-evolve: $iter changes (pass rate was ${rate}%)"
+	commit_workspace "bench-evolve: $iter changes (mean reward was ${rate}%)"
 done
 
 echo

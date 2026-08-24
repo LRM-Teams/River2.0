@@ -43,19 +43,22 @@ Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
 ## What Is Included
 
 - `update_plan` for long-horizon checklists.
+- Benchmark control (`extensions/bench-control.ts`): enforces explicit search-query limits, records a query ledger in the session, and uses `PI_BENCH_DEADLINE_EPOCH` to steer the agent into artifact finalization before the outer timeout.
 - Media tools (`extensions/media-tools.ts`), backed by Zhizengzeng's Google-native gateway (`/google/v1beta`):
   - `gemini_vision(paths, question)` — images, whole videos (audio track included, timestamp-aware, MM:SS), and audio files. Oversized videos are transcoded down with ffmpeg; frame sampling is the last resort. `smartCrop=true` zooms into the relevant image region (two-pass crop-and-reask). `startSeconds`/`durationSeconds` clip long videos.
   - `video_frames` — extract frames to files: fixed interval, exact timestamps, or scene-change detection.
   - `image_crop` — crop/resize an image with ffmpeg.
   - `media_probe` — ffprobe metadata (duration, resolution, codecs, fps).
+  - `gemini_vision` uses the configured model only, one bounded retry, a 30-second default request timeout, and a 65-second whole-tool deadline so a failed visual backend cannot consume the task budget indefinitely.
   - Requires `ffmpeg`/`ffprobe` on PATH. Key resolution: `ZHIZENGZENG_API_KEY` env, then `~/.pi/agent/media-tools.json`. Known gateway limits: OpenAI-format `video_url` does not deliver video; the Files API upload returns 500 — hence inline + transcode.
 - Safety gate (`extensions/safety-gate.ts`), model-agnostic bench rails:
-  - Blocks `rm -rf` on root/home/cwd, `mkfs`, `dd` to devices, fork bombs, force pushes, `curl|sh` remote-code execution, runtime `pi install`, and executing/sourcing workspace `SKILL.md` files.
-  - Backs up existing files to `~/.pi/agent/safety-backups/<date>/` before `write`/`edit` overwrites (first backup of the day per file).
+  - Blocks catastrophic filesystem/Git commands, credential harvesting, runtime package installation, executing workspace `SKILL.md`, and cloning unreviewed code into auto-loaded skill/plugin directories.
+  - Scans a repository for likely secrets before Git mutation/publication and blocks without revealing secret values.
+  - Preserves existing files beside the original as `*.preexisting.*` before `write`/`edit`, and protects fixed/human-only lines from modification.
 - Vendored memory, bench-slim by default: `memory_read` + lexical `memory_search` only. Set `PI_MEMORY_BENCH=0` to restore write/curator/share tools. For harness runs also set `PI_MEMORY_FINALIZE=0` and `PI_MEMORY_SKILL_DRAFTS=off` to disable shutdown finalization noise.
 - Companions installed by bootstrap: `pi-web-access`, `@lebronj/pi-lsp`.
 - Web fetch fallback (`pi-web-access`): bootstrap writes `~/.pi/web-search.json` with `fetchRouting.allowRemoteHostedProviders: true` and `providers: [http, firecrawl, jina, tinyfish, search1api]`, so pages that fail plain `http`/Readability (403 / anti-bot / JS-rendered) fall back to `jina` (r.jina.ai). Search routing defaults to `serper` with `jina` fallback. Set `SERPER_API_KEY` / `JINA_API_KEY` in that file for the fallback tiers.
-- Reward-only self-evolution loop (`bench/evolve/`): evaluates the harness on a task set for multiple rounds, feeds back only PASS/FAIL/TIMEOUT plus the agent's own traces (never grader output), and evolves `bench/workspace/` (system prompt append, memory card, tool trims, skills) with evidence-backed change manifests falsified by next-round flips. See `bench/evolve/README.md`.
+- Reward-only self-evolution loop (`bench/evolve/`): evaluates the harness on a task set for multiple rounds, feeds back only a clamped scalar score/status plus agent-owned traces and artifact manifests (never grader details), and evolves `bench/workspace/` (system prompt append, memory card, tool trims, skills) with evidence-backed change manifests falsified by next-round flips. See `bench/evolve/README.md`.
 - `/bench` command (`extensions/bench.ts`), the in-pi switch for the loop: `/bench tasks` lists tasks, `/bench run [task ...]` starts a one-off eval in the background, `/bench evolve [N]` starts the self-evolution loop, `/bench` shows status/results, `/bench stop` kills the run. Operator-only: disabled in the eval profile, and bench child processes never register it (`PI_BENCH_CHILD=1`).
 
 Not installed or loaded:

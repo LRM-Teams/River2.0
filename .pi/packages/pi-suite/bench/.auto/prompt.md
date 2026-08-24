@@ -27,7 +27,7 @@ A +2 overall on the full 60-task WildClawBench suite is about 1 extra full-pass 
 - `.pi/packages/pi-suite/vendor/pi-memory/**` (read-path and tool registration only)
 - Future: Harbor / EvalScope Pi adapter under `bench/harness/`
 
-Reward-only: never read `bench/tasks/*/grade.sh` or quarantine dirs; evidence is `results.json` + agent-owned traces only (see `bench/evolve/README.md`).
+Reward-only: never read `bench/tasks/*/grade.sh` or quarantine dirs; evidence is `results.json`, artifact manifests, and agent-owned traces only (see `bench/evolve/README.md`).
 
 ## Off Limits
 

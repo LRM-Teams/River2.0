@@ -1,12 +1,13 @@
 {
   "name": "@lebronj/pi-suite",
   "version": "0.1.38",
-  "description": "Slim Pi suite for WildClawBench / Claw-Eval: update_plan, bench-slim memory, gemini vision/media tools, safety gate.",
+  "description": "Slim Pi suite for WildClawBench / Claw-Eval: update_plan, bench control, memory, vision/media tools, safety gate.",
   "type": "module",
   "author": "JHP",
   "license": "MIT",
   "files": [
     "extensions/update-plan.ts",
+    "extensions/bench-control.ts",
     "extensions/safety-gate.ts",
     "extensions/media-tools.ts",
     "vendor",
@@ -18,6 +19,7 @@
   "pi": {
     "extensions": [
       "./extensions/update-plan.ts",
+      "./extensions/bench-control.ts",
       "./extensions/safety-gate.ts",
       "./extensions/media-tools.ts",
       "./vendor/pi-memory/index.ts"

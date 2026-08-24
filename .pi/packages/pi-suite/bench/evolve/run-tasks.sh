@@ -5,8 +5,10 @@ set -euo pipefail
 #
 # Runs every task under TASKS_DIR with the pi harness described by
 # WORKSPACE_DIR, and records ONLY:
-#   - status: pass / fail / timeout / error  (grader exit code, nothing else)
+#   - status + clamped overall_score         (scalar reward, no grader details)
+#   - agent_status                           (success / timeout / error)
 #   - wall_seconds, tool_calls, turns        (agent-owned process metadata)
+#   - initial/final artifact manifests       (paths, sizes, hashes; no content)
 #   - the agent's own session jsonl          (agent-owned trajectory)
 #
 # Grader stdout/stderr is discarded by default (BENCH_KEEP_GRADER_OUTPUT=1
@@ -15,7 +17,8 @@ set -euo pipefail
 #
 # Task directory contract (one subdir per task under TASKS_DIR):
 #   task.md      required  prompt handed to the agent
-#   grade.sh     required  run with cwd = the agent's run dir; exit 0 = pass
+#   grade.sh     required  run with cwd = the agent's run dir; may emit JSON
+#                         containing overall_score, else exit 0 = score 1
 #   timeout      optional  seconds (default $BENCH_TASK_TIMEOUT or 600)
 #   workspace/   optional  files copied into the agent's run dir before start
 #
@@ -75,12 +78,19 @@ mkdir -p "$OUT_DIR/traces"
 RESULTS="$OUT_DIR/results.json"
 echo '{}' >"$RESULTS"
 
-record() { # task status wall tool_calls turns
+record() { # task status wall tool_calls turns overall_score agent_status
 	node -e '
 const fs = require("node:fs");
-const [file, task, status, wall, toolCalls, turns] = process.argv.slice(1);
+const [file, task, status, wall, toolCalls, turns, overallScore, agentStatus] = process.argv.slice(1);
 const r = JSON.parse(fs.readFileSync(file, "utf8"));
-r[task] = { status, wall_seconds: Number(wall), tool_calls: Number(toolCalls), turns: Number(turns) };
+r[task] = {
+  status,
+  agent_status: agentStatus,
+  overall_score: Math.max(0, Math.min(1, Number(overallScore))),
+  wall_seconds: Number(wall),
+  tool_calls: Number(toolCalls),
+  turns: Number(turns),
+};
 fs.writeFileSync(file, JSON.stringify(r, null, 2) + "\n");
 ' "$RESULTS" "$@"
 }
@@ -89,21 +99,27 @@ for task in "${TASKS[@]}"; do
 	tdir="$TASKS_DIR/$task"
 	if [ ! -f "$tdir/task.md" ]; then
 		echo "[$task] missing task.md, skipping" >&2
-		record "$task" error 0 0 0
+		record "$task" error 0 0 0 0 error
 		continue
 	fi
 	run="$OUT_DIR/tasks/$task"
 	rm -rf "$run"
 	mkdir -p "$run/work" "$run/session"
 	[ -d "$tdir/workspace" ] && cp -a "$tdir/workspace/." "$run/work/"
+	node "$BENCH_DIR/evolve/build-artifact-manifest.mjs" "$run/work" "$run/initial-artifact-manifest.json"
 
 	tmo="$BENCH_TASK_TIMEOUT"
 	[ -f "$tdir/timeout" ] && tmo="$(tr -dc '0-9' <"$tdir/timeout")"
 
 	echo "[$task] running (timeout ${tmo}s)"
 	start="$(date +%s)"
+	deadline=$((start + tmo))
+	finalize_seconds="${PI_BENCH_FINALIZE_SECONDS:-$((tmo / 10))}"
+	[ "$finalize_seconds" -lt 15 ] && finalize_seconds=15
+	[ "$finalize_seconds" -gt 120 ] && finalize_seconds=120
 	set +e
 	(cd "$run/work" && timeout -k 30 "$tmo" \
+		env PI_BENCH_DEADLINE_EPOCH="$deadline" PI_BENCH_FINALIZE_SECONDS="$finalize_seconds" PI_BENCH_CHILD=1 \
 		"$PI_BIN" "${PI_ARGS[@]}" --session-dir "$run/session" \
 		"$(cat "$tdir/task.md")" >"$run/agent-stdout.txt" 2>&1)
 	agent_rc=$?
@@ -115,40 +131,81 @@ for task in "${TASKS[@]}"; do
 	tool_calls=0 turns=0
 	if [ -n "$sess" ]; then
 		cp "$sess" "$OUT_DIR/traces/$task.jsonl"
-		tool_calls="$(grep -c '"type":"toolCall"' "$sess" || true)"
-		turns="$(grep -c '"role":"assistant"' "$sess" || true)"
+		read -r tool_calls turns < <(node -e '
+const fs = require("node:fs");
+let toolCalls = 0;
+let turns = 0;
+for (const line of fs.readFileSync(process.argv[1], "utf8").split(/\r?\n/)) {
+  if (!line.trim()) continue;
+  try {
+    const entry = JSON.parse(line);
+    const message = entry?.type === "message" ? entry.message : undefined;
+    if (message?.role !== "assistant") continue;
+    turns += 1;
+    if (Array.isArray(message.content)) {
+      toolCalls += message.content.filter((block) => block?.type === "toolCall" || block?.type === "tool_use").length;
+    }
+  } catch {}
+}
+process.stdout.write(`${toolCalls} ${turns}\n`);
+' "$sess")
 	fi
 
+	agent_status=success
 	if [ "$agent_rc" -eq 124 ] || [ "$agent_rc" -eq 137 ]; then
-		record "$task" timeout "$wall" "$tool_calls" "$turns"
-		echo "[$task] TIMEOUT after ${wall}s"
-		continue
+		agent_status=timeout
+		echo "[$task] agent TIMEOUT after ${wall}s; grading preserved artifacts"
+	elif [ "$agent_rc" -ne 0 ]; then
+		agent_status=error
+		echo "[$task] agent ERROR rc=${agent_rc}; grading preserved artifacts"
 	fi
 
-	# Reward-only: keep the grader exit code, drop its output.
+	# Reward-only: retain only a clamped scalar score, then drop grader output.
 	if [ ! -f "$tdir/grade.sh" ]; then
-		record "$task" ungraded "$wall" "$tool_calls" "$turns"
+		node "$BENCH_DIR/evolve/build-artifact-manifest.mjs" "$run/work" "$run/artifact-manifest.json"
+		record "$task" ungraded "$wall" "$tool_calls" "$turns" 0 "$agent_status"
 		echo "[$task] no grade.sh — recorded as ungraded"
 		continue
 	fi
-	if [ "${BENCH_KEEP_GRADER_OUTPUT:-0}" = "1" ]; then
-		mkdir -p "$OUT_DIR/quarantine"
-		gout="$OUT_DIR/quarantine/$task.grader.txt"
-	else
-		gout=/dev/null
-	fi
+	gout="$run/grader-output.txt"
 	set +e
-	(cd "$run/work" && bash "$tdir/grade.sh" >"$gout" 2>&1)
+	(cd "$run/work" && PI_BENCH_TRANSCRIPT="$sess" bash "$tdir/grade.sh" >"$gout" 2>&1)
 	grade_rc=$?
 	set -e
 
-	if [ "$grade_rc" -eq 0 ]; then
-		record "$task" pass "$wall" "$tool_calls" "$turns"
-		echo "[$task] PASS (${wall}s, ${tool_calls} tool calls)"
+	overall_score="$(node -e '
+const fs = require("node:fs");
+const [file, fallback] = process.argv.slice(1);
+const raw = fs.readFileSync(file, "utf8");
+let score;
+const candidates = [raw.trim()];
+for (let index = raw.lastIndexOf("\n{"); index >= 0; index = raw.lastIndexOf("\n{", index - 1)) {
+  candidates.push(raw.slice(index + 1).trim());
+}
+for (const candidate of candidates) {
+  if (!candidate) continue;
+  try {
+    const parsed = JSON.parse(candidate);
+    if (Number.isFinite(Number(parsed.overall_score))) {
+      score = Number(parsed.overall_score);
+      break;
+    }
+  } catch {}
+}
+if (!Number.isFinite(score)) score = Number(fallback);
+process.stdout.write(String(Math.max(0, Math.min(1, score))));
+' "$gout" "$([ "$grade_rc" -eq 0 ] && echo 1 || echo 0)")"
+	node "$BENCH_DIR/evolve/build-artifact-manifest.mjs" "$run/work" "$run/artifact-manifest.json"
+	if [ "${BENCH_KEEP_GRADER_OUTPUT:-0}" = "1" ]; then
+		mkdir -p "$OUT_DIR/quarantine"
+		cp "$gout" "$OUT_DIR/quarantine/$task.grader.txt"
 	else
-		record "$task" fail "$wall" "$tool_calls" "$turns"
-		echo "[$task] FAIL (${wall}s, ${tool_calls} tool calls)"
+		rm -f "$gout"
 	fi
+	status=fail
+	[ "$overall_score" = "1" ] && status=pass
+	record "$task" "$status" "$wall" "$tool_calls" "$turns" "$overall_score" "$agent_status"
+	echo "[$task] ${status^^} score=${overall_score} agent=${agent_status} (${wall}s, ${tool_calls} tool calls)"
 done
 
 # Summary line for drivers (evolve.sh / measure.sh).
@@ -156,13 +213,14 @@ node -e '
 const r = require(process.argv[1]);
 const t = Object.values(r);
 const pass = t.filter((x) => x.status === "pass").length;
-const graded = t.filter((x) => ["pass", "fail", "timeout"].includes(x.status)).length;
+const graded = t.filter((x) => ["pass", "fail"].includes(x.status)).length;
 const safetyFail = Object.entries(r).filter(
-  ([name, x]) => /safety/i.test(name) && x.status !== "pass" && x.status !== "ungraded",
+  ([name, x]) => /safety/i.test(name) && x.overall_score < 1 && x.status !== "ungraded",
 ).length;
+const score = t.reduce((a, x) => a + (x.overall_score || 0), 0);
 const wall = t.reduce((a, x) => a + (x.wall_seconds || 0), 0);
 const calls = t.reduce((a, x) => a + (x.tool_calls || 0), 0);
 console.log(
-  `SUMMARY pass=${pass} graded=${graded} pass_rate=${graded ? ((100 * pass) / graded).toFixed(1) : 0} wall_min=${(wall / 60).toFixed(1)} tool_calls=${calls} safety_fail=${safetyFail}`,
+  `SUMMARY pass=${pass} graded=${graded} overall_score=${graded ? (score / graded).toFixed(4) : 0} pass_rate=${graded ? ((100 * pass) / graded).toFixed(1) : 0} wall_min=${(wall / 60).toFixed(1)} tool_calls=${calls} safety_fail=${safetyFail}`,
 );
 ' "$RESULTS"

@@ -20,8 +20,11 @@ const prevResults = prevDir ? (readJson(path.join(prevDir, "results.json")) ?? n
 const prevManifest = prevDir ? readJson(path.join(prevDir, "change_manifest.json")) : null;
 
 const rows = Object.entries(results).sort(([a], [b]) => a.localeCompare(b));
-const graded = rows.filter(([, r]) => ["pass", "fail", "timeout"].includes(r.status));
+const graded = rows.filter(([, r]) => ["pass", "fail"].includes(r.status));
 const passed = graded.filter(([, r]) => r.status === "pass");
+const meanScore = graded.length
+	? graded.reduce((sum, [, result]) => sum + (Number(result.overall_score) || 0), 0) / graded.length
+	: 0;
 
 const lines = [];
 lines.push(`# Iteration ${iter} evaluation completed (reward-only feedback)`);
@@ -30,11 +33,14 @@ lines.push(
 	`Pass rate: ${passed.length}/${graded.length}` +
 		(graded.length ? ` (${((100 * passed.length) / graded.length).toFixed(1)}%)` : ""),
 );
+lines.push(`Mean scalar reward: ${meanScore.toFixed(4)}`);
 lines.push("");
-lines.push("| task | status | wall_s | tool_calls | turns |");
-lines.push("|---|---|---|---|---|");
+lines.push("| task | status | agent_status | score | wall_s | tool_calls | turns |");
+lines.push("|---|---|---|---|---|---|---|");
 for (const [name, r] of rows) {
-	lines.push(`| ${name} | ${r.status.toUpperCase()} | ${r.wall_seconds} | ${r.tool_calls} | ${r.turns} |`);
+	lines.push(
+		`| ${name} | ${r.status.toUpperCase()} | ${r.agent_status ?? "unknown"} | ${Number(r.overall_score ?? 0).toFixed(3)} | ${r.wall_seconds} | ${r.tool_calls} | ${r.turns} |`,
+	);
 }
 
 if (prevResults) {
@@ -61,8 +67,9 @@ if (prevManifest?.changes?.length) {
 
 lines.push("");
 lines.push("## Evidence available to you");
-lines.push(`- \`${path.join(iterDir, "results.json")}\` — statuses and process metadata (shown above)`);
+lines.push(`- \`${path.join(iterDir, "results.json")}\` — scalar rewards, statuses, and process metadata (shown above)`);
 lines.push(`- \`${path.join(iterDir, "traces")}/*.jsonl\` — the eval agent's own session per task`);
+lines.push(`- \`${path.join(iterDir, "tasks", "<task>", "initial-artifact-manifest.json")}\` and \`artifact-manifest.json\` — pre/post artifact paths, sizes, and hashes`);
 lines.push("");
 lines.push("## Your job now");
 lines.push("1. Analyze failed/timed-out tasks from the traces (behavioral defects only).");

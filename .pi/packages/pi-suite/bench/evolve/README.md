@@ -1,9 +1,10 @@
 # Reward-only self-evolution loop for the Pi harness
 
-Runs the benchmark task set for multiple rounds, feeds back **only
-PASS / FAIL / TIMEOUT** (never grader output or expected answers), lets an
-evolve agent reflect on the eval agent's own traces, and evolves the harness
-components under `bench/workspace/`. The base model never changes.
+Runs the benchmark task set for multiple rounds, feeds back **only a clamped
+scalar reward/status** (never grader details or expected answers), lets an
+evolve agent reflect on the eval agent's own traces and artifact manifests,
+and evolves the harness components under `bench/workspace/`. The base model
+never changes.
 
 Design sources:
 
@@ -21,8 +22,9 @@ Design sources:
 │ iteration N                                                │
 │                                                            │
 │ run-tasks.sh          reward-only eval of bench/workspace  │
-│   → results.json      pass/fail/timeout + wall/tools/turns │
+│   → results.json      reward/status + wall/tools/turns    │
 │   → traces/*.jsonl    eval agent's OWN sessions only       │
+│   → artifact manifests pre/post paths, sizes, hashes       │
 │                                                            │
 │ build-query.mjs       results table + flip table vs N-1    │
 │                       + previous change_manifest to falsify│
@@ -46,12 +48,20 @@ Design sources:
 
 ## Reward-only guarantees
 
-- The runner records the grader **exit code only**; grader stdout/stderr goes
-  to `/dev/null` (set `BENCH_KEEP_GRADER_OUTPUT=1` to quarantine it for human
-  debugging — the evolve agent is prompt-forbidden from reading it).
-- The evolve agent's evidence is limited to `results.json` and the eval
-  agent's own session jsonl. `tasks/*/grade.sh` is declared off-limits in the
-  prompt, and graders never enter the eval agent's working directory.
+- The runner extracts only `overall_score`, clamps it to `[0,1]`, and then
+  deletes grader stdout/stderr. If no scalar JSON is emitted, exit 0 maps to
+  1 and nonzero maps to 0. Set `BENCH_KEEP_GRADER_OUTPUT=1` to quarantine the
+  raw output for human debugging; the evolve agent is prompt-forbidden from
+  reading it.
+- Agent timeout/error is recorded separately and does not skip grading:
+  whatever artifacts exist at termination are still scored.
+- Initial/final artifact manifests exclude session/cache/input control
+  directories and retain paths, sizes, and hashes, so overwritten or missing
+  deliverables are auditable without exposing grader internals.
+- The evolve agent's evidence is limited to `results.json`, pre/post artifact
+  manifests, and the eval agent's own session jsonl. `tasks/*/grade.sh` is
+  declared off-limits in the prompt, and graders never enter the eval agent's
+  working directory.
 - This is a policy boundary (like AHE's), not an OS sandbox.
 
 ## Usage
@@ -90,7 +100,8 @@ Runs land in `~/.pi/bench-runs/<timestamp>/iteration_NNN/` (override with
 Importing real WildClawBench / Claw-Eval tasks = one dir per task with
 `task.md` (prompt), `grade.sh` (exit 0 = pass), `timeout`, and `workspace/`
 (initial files). Wrap the official checker inside `grade.sh`; the loop only
-ever consumes its exit code, so Pass^3-style graders stay hidden.
+retains its scalar reward (or exit-code fallback), so verifier details stay
+hidden.
 
 ## Relation to `.auto/` (pi-autoresearch)
 

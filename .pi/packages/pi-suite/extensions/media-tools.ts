@@ -22,6 +22,8 @@ const execFileAsync = promisify(execFile);
 const CONFIG_PATH = path.join(homedir(), ".pi", "agent", "media-tools.json");
 const DEFAULT_BASE_URL = "https://api.zhizengzeng.com";
 const DEFAULT_VISION_MODEL = "gemini-3.1-pro-preview";
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_TOOL_TIMEOUT_MS = 65_000;
 // Gemini inline payload budget is 20MB; leave headroom for base64 + JSON overhead.
 const INLINE_BUDGET_BYTES = 13 * 1024 * 1024;
 
@@ -40,7 +42,7 @@ const AUDIO_MIMES: Record<string, string> = {
 	".ogg": "audio/ogg", ".flac": "audio/flac", ".m4a": "audio/aac", ".aiff": "audio/aiff",
 };
 
-type Config = { apiKey?: string; baseUrl?: string; visionModel?: string };
+type Config = { apiKey?: string; baseUrl?: string; visionModel?: string; requestTimeoutMs?: number };
 type NativePart = { text?: string; inline_data?: { mime_type: string; data: string } };
 
 async function loadConfig(): Promise<Config> {
@@ -104,34 +106,52 @@ async function callGeminiNative(
 	apiKey: string,
 	model: string,
 	parts: NativePart[],
+	timeoutMs: number,
 	signal?: AbortSignal,
 ): Promise<string> {
-	const response = await fetch(`${baseUrl}/google/v1beta/models/${model}:generateContent`, {
-		method: "POST",
-		headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-		body: JSON.stringify({ contents: [{ parts }] }),
-		signal,
-	});
-	const text = await response.text();
-	let payload: {
-		candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
-		error?: { message?: string };
-	};
-	try {
-		payload = JSON.parse(text);
-	} catch {
-		throw new Error(`Gemini gateway returned non-JSON (${response.status}): ${text.slice(0, 300)}`);
+	let lastError: Error | undefined;
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		if (signal?.aborted) throw new Error("aborted");
+		const timeoutSignal = AbortSignal.timeout(timeoutMs);
+		const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+		try {
+			const response = await fetch(`${baseUrl}/google/v1beta/models/${model}:generateContent`, {
+				method: "POST",
+				headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+				body: JSON.stringify({ contents: [{ parts }] }),
+				signal: requestSignal,
+			});
+			const text = await response.text();
+			let payload: {
+				candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+				error?: { message?: string };
+			};
+			try {
+				payload = JSON.parse(text);
+			} catch {
+				throw new Error(`Gemini gateway returned non-JSON (${response.status}): ${text.slice(0, 300)}`);
+			}
+			if (!response.ok || payload.error) {
+				const error = new Error(`Gemini request failed (${response.status}): ${payload.error?.message || text.slice(0, 300)}`);
+				if (attempt === 0 && (response.status === 429 || response.status >= 500)) {
+					lastError = error;
+					continue;
+				}
+				throw error;
+			}
+			const answer = (payload.candidates?.[0]?.content?.parts || [])
+				.filter((p) => p.text && p.thought !== true)
+				.map((p) => p.text)
+				.join("\n")
+				.trim();
+			if (!answer) throw new Error("Gemini returned an empty answer.");
+			return answer;
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			if (signal?.aborted || attempt > 0) throw lastError;
+		}
 	}
-	if (!response.ok || payload.error) {
-		throw new Error(`Gemini request failed (${response.status}): ${payload.error?.message || text.slice(0, 300)}`);
-	}
-	const answer = (payload.candidates?.[0]?.content?.parts || [])
-		.filter((p) => p.text && p.thought !== true)
-		.map((p) => p.text)
-		.join("\n")
-		.trim();
-	if (!answer) throw new Error("Gemini returned an empty answer.");
-	return answer;
+	throw lastError ?? new Error("Gemini request failed.");
 }
 
 const SMART_CROP_PROMPT = (question: string) => `Please observe this image. The user's question is: ${question}
@@ -150,7 +170,6 @@ const VisionParams = Type.Object({
 	durationSeconds: Type.Optional(Type.Number({ minimum: 0.1, description: "Clip a video/audio input: length in seconds from startSeconds." })),
 	smartCrop: Type.Optional(Type.Boolean({ description: "Single-image mode: let the model zoom into the relevant region first (two-pass crop-and-reask) for small details like text or distant objects." })),
 	maxFrames: Type.Optional(Type.Integer({ minimum: 1, maximum: 32, description: "Frame cap for the sampling fallback when a video is too large even after transcoding (default 12)." })),
-	model: Type.Optional(Type.String({ description: "Override vision model id." })),
 });
 
 const VideoFramesParams = Type.Object({
@@ -196,15 +215,22 @@ export default function (pi: ExtensionAPI) {
 			"If the answer drives a graded artifact, verify with a second targeted call before writing it down.",
 		],
 		parameters: VisionParams,
-		async execute(_id, params: { paths: string[]; question: string; startSeconds?: number; durationSeconds?: number; smartCrop?: boolean; maxFrames?: number; model?: string }, signal, onUpdate, ctx) {
+		async execute(_id, params: { paths: string[]; question: string; startSeconds?: number; durationSeconds?: number; smartCrop?: boolean; maxFrames?: number }, signal, onUpdate, ctx) {
 			const config = await loadConfig();
 			const apiKey = process.env.ZHIZENGZENG_API_KEY || config.apiKey;
 			if (!apiKey) {
 				return { content: [{ type: "text", text: `Missing API key. Set ZHIZENGZENG_API_KEY or ${CONFIG_PATH}.` }], isError: true };
 			}
 			const baseUrl = (process.env.ZHIZENGZENG_BASE_URL || config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "").replace(/\/v1$/, "");
-			const model = params.model || config.visionModel || DEFAULT_VISION_MODEL;
+			const model = config.visionModel || DEFAULT_VISION_MODEL;
+			const requestTimeoutMs =
+				typeof config.requestTimeoutMs === "number" && Number.isFinite(config.requestTimeoutMs)
+					? Math.max(5_000, Math.min(45_000, Math.floor(config.requestTimeoutMs)))
+					: DEFAULT_REQUEST_TIMEOUT_MS;
 			const maxFrames = params.maxFrames ?? 12;
+			const toolSignal = signal
+				? AbortSignal.any([signal, AbortSignal.timeout(DEFAULT_TOOL_TIMEOUT_MS)])
+				: AbortSignal.timeout(DEFAULT_TOOL_TIMEOUT_MS);
 
 			const parts: NativePart[] = [];
 			const described: string[] = [];
@@ -227,7 +253,7 @@ export default function (pi: ExtensionAPI) {
 					const first = await callGeminiNative(baseUrl, apiKey, model, [
 						{ inline_data: { mime_type: mime, data: b64 } },
 						{ text: SMART_CROP_PROMPT(params.question) },
-					], signal);
+					], requestTimeoutMs, toolSignal);
 					const match = first.match(/\{[^{}]*"2dpos"\s*:\s*\[([^\]]+)\][^{}]*\}/);
 					if (!match) {
 						return { content: [{ type: "text", text: first }], details: { model, mode: "smartCrop:direct" } };
@@ -249,7 +275,7 @@ export default function (pi: ExtensionAPI) {
 					const second = await callGeminiNative(baseUrl, apiKey, model, [
 						{ inline_data: { mime_type: mime, data: cropB64 } },
 						{ text: `${params.question}\nAnswer precisely based only on what is visible. This is a zoomed-in crop of a larger image.` },
-					], signal);
+					], requestTimeoutMs, toolSignal);
 					return { content: [{ type: "text", text: second }], details: { model, mode: "smartCrop:zoomed", region: { x: cx, y: cy, width: cw, height: ch } } };
 				}
 
@@ -325,7 +351,7 @@ export default function (pi: ExtensionAPI) {
 							onUpdate?.({ content: [{ type: "text", text: `Still too large; falling back to ${n} sampled frames.` }] });
 							parts.push({ text: `Video: ${name}${clipNote}, duration ${fmtTs(duration)}. Too large to inline; ${n} sampled frames follow, labeled with timestamps. The audio track is NOT included.` });
 							for (let i = 0; i < n; i++) {
-								if (signal?.aborted) throw new Error("aborted");
+								if (toolSignal.aborted) throw new Error("aborted");
 								const t = (duration * (i + 0.5)) / n;
 								const framePath = path.join(await ensureTmp(), `f${i}.jpg`);
 								await extractFrameAt(file, t, framePath, 1024);
@@ -349,7 +375,7 @@ export default function (pi: ExtensionAPI) {
 				parts.push({ text: `Question: ${params.question}\nAnswer precisely based only on what is visible/audible. Use MM:SS format for timestamps. If something cannot be determined from the provided media, say so explicitly instead of guessing.` });
 
 				onUpdate?.({ content: [{ type: "text", text: `Asking ${model} about ${described.join(", ")}...` }] });
-				const answer = await callGeminiNative(baseUrl, apiKey, model, parts, signal);
+				const answer = await callGeminiNative(baseUrl, apiKey, model, parts, requestTimeoutMs, toolSignal);
 				return { content: [{ type: "text", text: answer }], details: { model, media: described } };
 			} catch (error) {
 				return { content: [{ type: "text", text: `gemini_vision failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
