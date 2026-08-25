@@ -16,7 +16,7 @@ pi install npm:@lebronj/pi-lsp
 Or bootstrap Pi, write the DeepSeek provider, and install the slim suite. The script asks for the API key on the terminal; it does not ship a key.
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.38.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.39.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 Defaults written to `~/.pi/agent/models.json` / `settings.json`:
@@ -60,6 +60,14 @@ Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
 - Web fetch fallback (`pi-web-access`): bootstrap writes `~/.pi/web-search.json` with `fetchRouting.allowRemoteHostedProviders: true` and `providers: [http, firecrawl, jina, tinyfish, search1api]`, so pages that fail plain `http`/Readability (403 / anti-bot / JS-rendered) fall back to `jina` (r.jina.ai). Search routing defaults to `serper` with `jina` fallback. Set `SERPER_API_KEY` / `JINA_API_KEY` in that file for the fallback tiers.
 - Reward-only self-evolution loop (`bench/evolve/`): evaluates the harness on a task set for multiple rounds, feeds back only a clamped scalar score/status plus agent-owned traces and artifact manifests (never grader details), and evolves `bench/workspace/` (system prompt append, memory card, tool trims, skills) with evidence-backed change manifests falsified by next-round flips. See `bench/evolve/README.md`.
 - `/bench` command (`extensions/bench.ts`), the in-pi switch for the loop: `/bench tasks` lists tasks, `/bench run [task ...]` starts a one-off eval in the background, `/bench evolve [N]` starts the self-evolution loop, `/bench` shows status/results, `/bench stop` kills the run. Operator-only: disabled in the eval profile, and bench child processes never register it (`PI_BENCH_CHILD=1`).
+
+## RPC Runner Requirements
+
+- Use Pi `0.80.4` or newer; this profile is tested with `0.84.3`.
+- In multi-turn sessions, wait for `agent_settled` before sending the next normal prompt. `agent_end` only marks one low-level run and may be followed by retry, compaction, or queued continuation.
+- If a message must be submitted while Pi is busy, send RPC `prompt` with `streamingBehavior: "followUp"` (or `"steer"` when interruption is intentional). Do not retry a normal prompt in a tight loop after `Agent is already processing`.
+- Keep the outer task timeout and each prompt timeout separate in logs and result status. A 600-second prompt timeout inside a 7200-second task budget is a prompt timeout, not a 7200-second Pi run.
+- After any timeout, abort the active run and wait for settlement or replace the Pi process before reusing the session. Multi-role handoffs must not reuse a still-busy process.
 
 Not installed or loaded:
 

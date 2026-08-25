@@ -1,6 +1,6 @@
 {
   "name": "@lebronj/pi-suite",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "description": "Slim Pi suite for WildClawBench / Claw-Eval: update_plan, bench control, memory, vision/media tools, safety gate.",
   "type": "module",
   "keywords": [
