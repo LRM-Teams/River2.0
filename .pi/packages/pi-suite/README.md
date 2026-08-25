@@ -7,7 +7,7 @@ Evolution helpers and subagents are **not** loaded during evaluation. See `docs/
 ## Install
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.84.3
 pi install npm:@lebronj/pi-suite
 pi install npm:pi-web-access
 pi install npm:@lebronj/pi-lsp
@@ -16,7 +16,7 @@ pi install npm:@lebronj/pi-lsp
 Or bootstrap Pi, write the DeepSeek provider, and install the slim suite. The script asks for the API key on the terminal; it does not ship a key.
 
 ```bash
-curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.39.tgz | tar -xzO package/scripts/bootstrap.sh | bash
+curl -fsSL https://registry.npmjs.org/@lebronj/pi-suite/-/pi-suite-0.1.40.tgz | tar -xzO package/scripts/bootstrap.sh | bash
 ```
 
 Defaults written to `~/.pi/agent/models.json` / `settings.json`:
@@ -43,18 +43,19 @@ Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
 ## What Is Included
 
 - `update_plan` for long-horizon checklists.
-- Benchmark control (`extensions/bench-control.ts`): enforces explicit search-query limits, records a query ledger in the session, and uses `PI_BENCH_DEADLINE_EPOCH` to steer the agent into artifact finalization before the outer timeout.
+- Benchmark control (`extensions/bench-control.ts`): records the Pi/suite/tool runtime manifest, enforces explicit search-query limits across turns, checks requested artifacts at 25%/50%/75% of the working budget, and uses `PI_BENCH_DEADLINE_EPOCH` to steer the agent into artifact finalization before the outer timeout. Finalization blocks new searches, remote vision calls, installations, clones, and downloads.
 - Media tools (`extensions/media-tools.ts`), backed by Zhizengzeng's Google-native gateway (`/google/v1beta`):
   - `gemini_vision(paths, question)` — images, whole videos (audio track included, timestamp-aware, MM:SS), and audio files. Oversized videos are transcoded down with ffmpeg; frame sampling is the last resort. `smartCrop=true` zooms into the relevant image region (two-pass crop-and-reask). `startSeconds`/`durationSeconds` clip long videos.
+  - `image_contact_sheet` — build a numbered grid for pixel-based batch classification instead of inferring classes from filenames.
   - `video_frames` — extract frames to files: fixed interval, exact timestamps, or scene-change detection.
   - `image_crop` — crop/resize an image with ffmpeg.
   - `media_probe` — ffprobe metadata (duration, resolution, codecs, fps).
-  - `gemini_vision` uses the configured model only, one bounded retry, a 30-second default request timeout, and a 65-second whole-tool deadline so a failed visual backend cannot consume the task budget indefinitely.
+  - `gemini_vision` uses the configured model only, one bounded retry with exponential backoff, a 30-second default request timeout, a 65-second whole-tool deadline, and a cross-call circuit breaker so a failed visual backend cannot consume the task budget indefinitely.
   - Requires `ffmpeg`/`ffprobe` on PATH. Key resolution: `ZHIZENGZENG_API_KEY` env, then `~/.pi/agent/media-tools.json`. Known gateway limits: OpenAI-format `video_url` does not deliver video; the Files API upload returns 500 — hence inline + transcode.
 - Safety gate (`extensions/safety-gate.ts`), model-agnostic bench rails:
   - Blocks catastrophic filesystem/Git commands, credential harvesting, runtime package installation, executing workspace `SKILL.md`, and cloning unreviewed code into auto-loaded skill/plugin directories.
   - Scans a repository for likely secrets before Git mutation/publication and blocks without revealing secret values.
-  - Preserves existing files beside the original as `*.preexisting.*` before `write`/`edit`, and protects fixed/human-only lines from modification.
+  - Preserves existing files beside the original as `*.preexisting.*` before `write`/`edit` or common shell overwrites, blocks writes through symbolic links, treats overwrite authorization as negation-aware, and protects fixed/human-only lines from modification.
 - Vendored memory, bench-slim by default: `memory_read` + lexical `memory_search` only. Set `PI_MEMORY_BENCH=0` to restore write/curator/share tools. For harness runs also set `PI_MEMORY_FINALIZE=0` and `PI_MEMORY_SKILL_DRAFTS=off` to disable shutdown finalization noise.
 - Companions installed by bootstrap: `pi-web-access`, `@lebronj/pi-lsp`.
 - Web fetch fallback (`pi-web-access`): bootstrap writes `~/.pi/web-search.json` with `fetchRouting.allowRemoteHostedProviders: true` and `providers: [http, firecrawl, jina, tinyfish, search1api]`, so pages that fail plain `http`/Readability (403 / anti-bot / JS-rendered) fall back to `jina` (r.jina.ai). Search routing defaults to `serper` with `jina` fallback. Set `SERPER_API_KEY` / `JINA_API_KEY` in that file for the fallback tiers.
@@ -63,7 +64,7 @@ Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
 
 ## RPC Runner Requirements
 
-- Use Pi `0.80.4` or newer; this profile is tested with `0.84.3`.
+- Use Pi `0.84.3` or newer. Bootstrap pins `0.84.3` by default; set `PI_VERSION=latest` to opt into a newer release after validating extension compatibility.
 - In multi-turn sessions, wait for `agent_settled` before sending the next normal prompt. `agent_end` only marks one low-level run and may be followed by retry, compaction, or queued continuation.
 - If a message must be submitted while Pi is busy, send RPC `prompt` with `streamingBehavior: "followUp"` (or `"steer"` when interruption is intentional). Do not retry a normal prompt in a tight loop after `Agent is already processing`.
 - Keep the outer task timeout and each prompt timeout separate in logs and result status. A 600-second prompt timeout inside a 7200-second task budget is a prompt timeout, not a 7200-second Pi run.

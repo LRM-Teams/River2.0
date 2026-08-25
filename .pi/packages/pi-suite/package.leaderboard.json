@@ -1,10 +1,24 @@
 {
   "name": "@lebronj/pi-suite",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "description": "Slim Pi suite for WildClawBench / Claw-Eval: update_plan, bench control, memory, vision/media tools, safety gate.",
   "type": "module",
   "author": "JHP",
   "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": ">=0.84.3",
+    "@earendil-works/pi-ai": ">=0.84.3",
+    "@earendil-works/pi-coding-agent": ">=0.84.3",
+    "@earendil-works/pi-tui": ">=0.84.3",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": { "optional": true },
+    "@earendil-works/pi-ai": { "optional": true },
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true },
+    "typebox": { "optional": true }
+  },
   "files": [
     "extensions/update-plan.ts",
     "extensions/bench-control.ts",

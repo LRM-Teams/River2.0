@@ -24,6 +24,8 @@ const DEFAULT_BASE_URL = "https://api.zhizengzeng.com";
 const DEFAULT_VISION_MODEL = "gemini-3.1-pro-preview";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 65_000;
+const DEFAULT_CIRCUIT_COOLDOWN_MS = 60_000;
+const CIRCUIT_FAILURE_THRESHOLD = 2;
 // Gemini inline payload budget is 20MB; leave headroom for base64 + JSON overhead.
 const INLINE_BUDGET_BYTES = 13 * 1024 * 1024;
 
@@ -45,6 +47,37 @@ const AUDIO_MIMES: Record<string, string> = {
 type Config = { apiKey?: string; baseUrl?: string; visionModel?: string; requestTimeoutMs?: number };
 type NativePart = { text?: string; inline_data?: { mime_type: string; data: string } };
 
+class GeminiGatewayError extends Error {
+	retryable: boolean;
+
+	constructor(message: string, retryable: boolean) {
+		super(message);
+		this.name = "GeminiGatewayError";
+		this.retryable = retryable;
+	}
+}
+
+export function retryDelayMs(attempt: number, randomValue = Math.random()): number {
+	return Math.min(2_000, 400 * 2 ** attempt) + Math.floor(Math.max(0, Math.min(1, randomValue)) * 200);
+}
+
+async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) throw new Error("aborted");
+	await new Promise<void>((resolve, reject) => {
+		const finish = (): void => {
+			if (signal) signal.removeEventListener("abort", abort);
+			resolve();
+		};
+		const timer = setTimeout(finish, delayMs);
+		const abort = (): void => {
+			clearTimeout(timer);
+			if (signal) signal.removeEventListener("abort", abort);
+			reject(new Error("aborted"));
+		};
+		if (signal) signal.addEventListener("abort", abort, { once: true });
+	});
+}
+
 async function loadConfig(): Promise<Config> {
 	try {
 		return JSON.parse(await fs.readFile(CONFIG_PATH, "utf8")) as Config;
@@ -55,6 +88,16 @@ async function loadConfig(): Promise<Config> {
 
 function resolvePath(ctx: ExtensionContext, p: string): string {
 	return path.isAbsolute(p) ? p : path.join(ctx.cwd, p);
+}
+
+async function requireNewOutput(file: string): Promise<void> {
+	try {
+		await fs.access(file);
+		throw new Error(`Refusing to overwrite existing output: ${file}. Choose a distinct output path.`);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
 }
 
 async function ffprobeJson(file: string): Promise<Record<string, unknown>> {
@@ -129,15 +172,16 @@ async function callGeminiNative(
 			try {
 				payload = JSON.parse(text);
 			} catch {
-				throw new Error(`Gemini gateway returned non-JSON (${response.status}): ${text.slice(0, 300)}`);
+				throw new GeminiGatewayError(
+					`Gemini gateway returned non-JSON (${response.status}): ${text.slice(0, 300)}`,
+					response.status === 429 || response.status >= 500,
+				);
 			}
 			if (!response.ok || payload.error) {
-				const error = new Error(`Gemini request failed (${response.status}): ${payload.error?.message || text.slice(0, 300)}`);
-				if (attempt === 0 && (response.status === 429 || response.status >= 500)) {
-					lastError = error;
-					continue;
-				}
-				throw error;
+				throw new GeminiGatewayError(
+					`Gemini request failed (${response.status}): ${payload.error?.message || text.slice(0, 300)}`,
+					response.status === 429 || response.status >= 500,
+				);
 			}
 			const answer = (payload.candidates?.[0]?.content?.parts || [])
 				.filter((p) => p.text && p.thought !== true)
@@ -147,8 +191,12 @@ async function callGeminiNative(
 			if (!answer) throw new Error("Gemini returned an empty answer.");
 			return answer;
 		} catch (error) {
-			lastError = error instanceof Error ? error : new Error(String(error));
-			if (signal?.aborted || attempt > 0) throw lastError;
+			if (signal?.aborted) throw new Error("aborted");
+			lastError = error instanceof GeminiGatewayError
+				? error
+				: new GeminiGatewayError(error instanceof Error ? error.message : String(error), true);
+			if (attempt > 0 || !lastError.retryable) throw lastError;
+			await waitForRetry(retryDelayMs(attempt), signal);
 		}
 	}
 	throw lastError ?? new Error("Gemini request failed.");
@@ -170,6 +218,7 @@ const VisionParams = Type.Object({
 	durationSeconds: Type.Optional(Type.Number({ minimum: 0.1, description: "Clip a video/audio input: length in seconds from startSeconds." })),
 	smartCrop: Type.Optional(Type.Boolean({ description: "Single-image mode: let the model zoom into the relevant region first (two-pass crop-and-reask) for small details like text or distant objects." })),
 	maxFrames: Type.Optional(Type.Integer({ minimum: 1, maximum: 32, description: "Frame cap for the sampling fallback when a video is too large even after transcoding (default 12)." })),
+	structured: Type.Optional(Type.Boolean({ description: "Return JSON with answer, candidates, confidence, and evidence. Use when locations, categories, or other ambiguous graded facts need conflict-aware verification." })),
 });
 
 const VideoFramesParams = Type.Object({
@@ -196,7 +245,58 @@ const ProbeParams = Type.Object({
 	path: Type.String({ description: "Media file path (video, audio, or image)." }),
 });
 
+const ContactSheetParams = Type.Object({
+	paths: Type.Array(Type.String(), { minItems: 1, maxItems: 64, description: "Image paths in stable label order (1..N)." }),
+	output: Type.Optional(Type.String({ description: "Output image path (default: contact-sheet.jpg in cwd)." })),
+	columns: Type.Optional(Type.Integer({ minimum: 1, maximum: 10, description: "Grid columns (default 5)." })),
+	cellWidth: Type.Optional(Type.Integer({ minimum: 64, maximum: 1024, description: "Cell width in pixels (default 256)." })),
+	cellHeight: Type.Optional(Type.Integer({ minimum: 64, maximum: 1024, description: "Cell height in pixels (default 256)." })),
+});
+
+export function contactSheetLayout(count: number, columns: number, cellWidth: number, cellHeight: number): string {
+	return Array.from({ length: count }, (_value, index) => {
+		const column = index % columns;
+		const row = Math.floor(index / columns);
+		return `${column * cellWidth}_${row * cellHeight}`;
+	}).join("|");
+}
+
 export default function (pi: ExtensionAPI) {
+	let consecutiveGatewayFailures = 0;
+	let circuitOpenUntil = 0;
+
+	pi.on("session_start", () => {
+		consecutiveGatewayFailures = 0;
+		circuitOpenUntil = 0;
+		pi.appendEntry("pi-suite-extension-health", { extension: "media-tools", status: "active" });
+	});
+
+	const callVision = async (
+		baseUrl: string,
+		apiKey: string,
+		model: string,
+		parts: NativePart[],
+		timeoutMs: number,
+		signal?: AbortSignal,
+	): Promise<string> => {
+		if (Date.now() < circuitOpenUntil) {
+			throw new Error(`Gemini circuit breaker is open for ${Math.ceil((circuitOpenUntil - Date.now()) / 1000)}s after repeated gateway failures`);
+		}
+		try {
+			const answer = await callGeminiNative(baseUrl, apiKey, model, parts, timeoutMs, signal);
+			consecutiveGatewayFailures = 0;
+			return answer;
+		} catch (error) {
+			if (error instanceof GeminiGatewayError && error.retryable) {
+				consecutiveGatewayFailures += 1;
+				if (consecutiveGatewayFailures >= CIRCUIT_FAILURE_THRESHOLD) {
+					circuitOpenUntil = Date.now() + DEFAULT_CIRCUIT_COOLDOWN_MS;
+				}
+			}
+			throw error;
+		}
+	};
+
 	pi.registerTool({
 		name: "gemini_vision",
 		label: "Gemini Vision",
@@ -213,9 +313,10 @@ export default function (pi: ExtensionAPI) {
 			"For very long videos, ask for an overview first, then use startSeconds/durationSeconds to re-inspect key segments, or video_frames to locate cuts.",
 			"For small details in images (text, scoreboard, distant objects), set smartCrop=true.",
 			"If the answer drives a graded artifact, verify with a second targeted call before writing it down.",
+			"For ambiguous locations or categories, set structured=true and compare candidates and evidence; do not let one late call silently replace stronger prior evidence.",
 		],
 		parameters: VisionParams,
-		async execute(_id, params: { paths: string[]; question: string; startSeconds?: number; durationSeconds?: number; smartCrop?: boolean; maxFrames?: number }, signal, onUpdate, ctx) {
+		async execute(_id, params: { paths: string[]; question: string; startSeconds?: number; durationSeconds?: number; smartCrop?: boolean; maxFrames?: number; structured?: boolean }, signal, onUpdate, ctx) {
 			const config = await loadConfig();
 			const apiKey = process.env.ZHIZENGZENG_API_KEY || config.apiKey;
 			if (!apiKey) {
@@ -250,7 +351,7 @@ export default function (pi: ExtensionAPI) {
 					const mime = IMAGE_MIMES[path.extname(file).toLowerCase()];
 					const b64 = (await fs.readFile(file)).toString("base64");
 					onUpdate?.({ content: [{ type: "text", text: "Pass 1: locating relevant region..." }] });
-					const first = await callGeminiNative(baseUrl, apiKey, model, [
+					const first = await callVision(baseUrl, apiKey, model, [
 						{ inline_data: { mime_type: mime, data: b64 } },
 						{ text: SMART_CROP_PROMPT(params.question) },
 					], requestTimeoutMs, toolSignal);
@@ -272,7 +373,7 @@ export default function (pi: ExtensionAPI) {
 					await execFileAsync("ffmpeg", ["-y", "-loglevel", "error", "-i", file, "-vf", `crop=${cw}:${ch}:${cx}:${cy}`, cropPath], { maxBuffer: 8 * 1024 * 1024 });
 					onUpdate?.({ content: [{ type: "text", text: `Pass 2: analyzing zoomed region ${cw}x${ch} at (${cx},${cy})...` }] });
 					const cropB64 = (await fs.readFile(cropPath)).toString("base64");
-					const second = await callGeminiNative(baseUrl, apiKey, model, [
+					const second = await callVision(baseUrl, apiKey, model, [
 						{ inline_data: { mime_type: mime, data: cropB64 } },
 						{ text: `${params.question}\nAnswer precisely based only on what is visible. This is a zoomed-in crop of a larger image.` },
 					], requestTimeoutMs, toolSignal);
@@ -372,16 +473,58 @@ export default function (pi: ExtensionAPI) {
 					described.push(`${isVideo ? "video" : "audio"} ${name}${clipNote}`);
 				}
 
-				parts.push({ text: `Question: ${params.question}\nAnswer precisely based only on what is visible/audible. Use MM:SS format for timestamps. If something cannot be determined from the provided media, say so explicitly instead of guessing.` });
+				parts.push({ text: `Question: ${params.question}\nAnswer precisely based only on what is visible/audible. Use MM:SS format for timestamps. If something cannot be determined from the provided media, say so explicitly instead of guessing.${params.structured ? '\nReturn only valid JSON with this shape: {"answer":"...","candidates":[{"name":"...","confidence":0.0,"evidence":["..."]}],"confidence":0.0,"evidence":["..."]}. Confidence must be between 0 and 1.' : ""}` });
 
 				onUpdate?.({ content: [{ type: "text", text: `Asking ${model} about ${described.join(", ")}...` }] });
-				const answer = await callGeminiNative(baseUrl, apiKey, model, parts, requestTimeoutMs, toolSignal);
-				return { content: [{ type: "text", text: answer }], details: { model, media: described } };
+				const answer = await callVision(baseUrl, apiKey, model, parts, requestTimeoutMs, toolSignal);
+				return { content: [{ type: "text", text: answer }], details: { model, media: described, structured: params.structured === true } };
 			} catch (error) {
 				return { content: [{ type: "text", text: `gemini_vision failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
 			} finally {
 				if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 			}
+		},
+	});
+
+	pi.registerTool({
+		name: "image_contact_sheet",
+		label: "Image Contact Sheet",
+		description: "Create a numbered contact sheet from up to 64 images using ffmpeg. Returns the output path and the stable number-to-file mapping for batch visual classification.",
+		promptSnippet: "Create a numbered image grid with image_contact_sheet before classifying many images.",
+		promptGuidelines: [
+			"For directories of images, build a contact sheet and inspect pixels in batches; never classify only from filenames.",
+		],
+		parameters: ContactSheetParams,
+		async execute(_id, params: { paths: string[]; output?: string; columns?: number; cellWidth?: number; cellHeight?: number }, signal, _onUpdate, ctx) {
+			const files = params.paths.map((candidate) => resolvePath(ctx, candidate));
+			for (const file of files) {
+				if (signal?.aborted) throw new Error("aborted");
+				await fs.access(file);
+				if (!IMAGE_MIMES[path.extname(file).toLowerCase()]) throw new Error(`Unsupported image type: ${file}`);
+			}
+			const columns = Math.min(params.columns ?? 5, files.length);
+			const cellWidth = params.cellWidth ?? 256;
+			const cellHeight = params.cellHeight ?? 256;
+			const output = resolvePath(ctx, params.output ?? "contact-sheet.jpg");
+			await requireNewOutput(output);
+			await fs.mkdir(path.dirname(output), { recursive: true });
+			const args = ["-y", "-loglevel", "error"];
+			for (const file of files) args.push("-i", file);
+			const filters = files.map((_file, index) =>
+				`[${index}:v]scale=${cellWidth}:${cellHeight}:force_original_aspect_ratio=decrease,pad=${cellWidth}:${cellHeight}:(ow-iw)/2:(oh-ih)/2:color=white,drawtext=text='${index + 1}':x=8:y=8:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.65[v${index}]`,
+			);
+			if (files.length === 1) {
+				filters.push("[v0]null[out]");
+			} else {
+				filters.push(`${files.map((_file, index) => `[v${index}]`).join("")}xstack=inputs=${files.length}:layout=${contactSheetLayout(files.length, columns, cellWidth, cellHeight)}:fill=white[out]`);
+			}
+			args.push("-filter_complex", filters.join(";"), "-map", "[out]", "-frames:v", "1", "-q:v", "2", output);
+			await execFileAsync("ffmpeg", args, { maxBuffer: 16 * 1024 * 1024, signal });
+			const mapping = files.map((file, index) => ({ label: index + 1, path: file }));
+			return {
+				content: [{ type: "text", text: `Contact sheet: ${output}\n${mapping.map((entry) => `${entry.label}: ${entry.path}`).join("\n")}` }],
+				details: { output, columns, cellWidth, cellHeight, mapping },
+			};
 		},
 	});
 
@@ -426,13 +569,17 @@ export default function (pi: ExtensionAPI) {
 				for (let t = 0; t < duration && timestamps.length < maxFrames; t += step) timestamps.push(t);
 			}
 
+			const planned = timestamps.map((timestamp, index) => ({
+				path: path.join(outDir, `${stem}-${String(index).padStart(3, "0")}-${timestamp.toFixed(1)}s.jpg`),
+				timestamp,
+			}));
+			for (const output of planned) await requireNewOutput(output.path);
 			const written: Array<{ path: string; timestamp: number }> = [];
-			for (const [i, t] of timestamps.entries()) {
+			for (const [i, output] of planned.entries()) {
 				if (signal?.aborted) break;
-				const outPath = path.join(outDir, `${stem}-${String(i).padStart(3, "0")}-${t.toFixed(1)}s.jpg`);
-				await extractFrameAt(file, t, outPath, maxWidth);
-				written.push({ path: outPath, timestamp: t });
-				if (i % 10 === 9) onUpdate?.({ content: [{ type: "text", text: `Extracted ${i + 1}/${timestamps.length} frames...` }] });
+				await extractFrameAt(file, output.timestamp, output.path, maxWidth);
+				written.push(output);
+				if (i % 10 === 9) onUpdate?.({ content: [{ type: "text", text: `Extracted ${i + 1}/${planned.length} frames...` }] });
 			}
 
 			const lines = [`Extracted ${written.length} frame(s) from ${file}:`, ...written.map((w) => `- [${fmtTs(w.timestamp)}] ${w.path}`)];
@@ -451,6 +598,7 @@ export default function (pi: ExtensionAPI) {
 			await fs.access(file);
 			const ext = path.extname(file) || ".png";
 			const outPath = resolvePath(ctx, params.output || path.join(path.dirname(file), `${path.basename(file, ext)}-crop${ext}`));
+			await requireNewOutput(outPath);
 			await fs.mkdir(path.dirname(outPath), { recursive: true });
 			let vf = `crop=${params.width}:${params.height}:${params.x}:${params.y}`;
 			if (params.resizeWidth) vf += `,scale=${params.resizeWidth}:-2`;

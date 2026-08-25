@@ -23,6 +23,7 @@ else
   TEAM_API="${TEAM_API:-openai-completions}"
 fi
 PI_SUITE="${PI_SUITE:-npm:@lebronj/pi-suite}"
+PI_VERSION="${PI_VERSION:-0.84.3}"
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm is required. Install Node.js first." >&2
@@ -72,7 +73,13 @@ else
 fi
 
 echo "Installing Pi CLI..."
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@$PI_VERSION"
+INSTALLED_PI_VERSION="$(pi --version)"
+if [ "$PI_VERSION" != "latest" ] && [ "$INSTALLED_PI_VERSION" != "$PI_VERSION" ]; then
+  echo "Pi version verification failed: expected $PI_VERSION, got $INSTALLED_PI_VERSION" >&2
+  exit 1
+fi
+echo "Pi CLI ready: $INSTALLED_PI_VERSION"
 
 AGENT_DIR="$HOME/.pi/agent"
 mkdir -p "$AGENT_DIR"
@@ -334,7 +341,7 @@ Provider: $TEAM_PROVIDER
 Base URL: $TEAM_BASE_URL
 Model: $TEAM_MODEL
 Companions: pi-web-access, @lebronj/pi-lsp
-Suite extensions: update_plan, bench-control, gemini_vision/video_frames/image_crop/media_probe, safety-gate
+Suite extensions: update_plan, bench-control, gemini_vision/image_contact_sheet/video_frames/image_crop/media_probe, safety-gate
 Eval exclusions: autogoal/skill-creator (evolve only); pi-subagents/Figma not installed
 Bench tip: export PI_MEMORY_FINALIZE=0 PI_MEMORY_SKILL_DRAFTS=off in the harness.
 Run: pi

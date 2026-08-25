@@ -16,6 +16,7 @@ import {
 	readFileSync,
 	statSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 const MAX_SECRET_SCAN_FILES = 2_000;
@@ -60,7 +61,12 @@ const CREDENTIAL_PROBE_PATTERN =
 const TRUST_PATH_PATTERN =
 	/(?:^|[\s"'])(?:(?:~|\$HOME|\/root|\/home\/[^/\s"']+)\/)?(?:\.(?:pi|agents|codex)\/(?:agent\/)?)?(?:skills|plugins?)(?:\/|[\s"']|$)/i;
 const TRUST_PATH_MUTATION_PATTERN = /(?:\bgit\s+clone\b|\b(?:cp|mv|rsync|install|mkdir|ln)\b)/i;
-const OVERWRITE_AUTHORIZATION_PATTERN = /\b(?:overwrite|replace|rewrite|modify|update)\b|(?:覆盖|替换|重写|修改|更新)/i;
+const OVERWRITE_AUTHORIZATION_PATTERN =
+	/(?:\b(?:overwrite|replace|rewrite)\b|\b(?:modify|update)\b[\s\S]{0,32}\b(?:file|document|artifact|schedule|summary)\b|(?:覆盖|替换|重写)|(?:修改|更新)[^。；\n]{0,16}(?:文件|文档|产物|日程|摘要))/i;
+const OVERWRITE_DENIAL_PATTERN =
+	/(?:\b(?:do\s+not|don't|must\s+not|never|without|avoid)\b[\s\S]{0,32}\b(?:overwrite|replace|rewrite|modify|update)\b|(?:不要|不得|不能|禁止|避免)[^。；\n]{0,16}(?:覆盖|替换|重写|修改|更新))/i;
+const REDIRECTION_TARGET_PATTERN = /(?:^|[^>])\d*>(?![>&])\s*(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g;
+const SHELL_FILE_MUTATION_PATTERN = /(?:^|[;&|]\s*|\bsudo\s+)(cp|mv|install|tee|sed|perl)\b([^;&|\n]*)/gi;
 
 export interface SecretFinding {
 	path: string;
@@ -76,6 +82,59 @@ function resolveGitWorkingDirectory(command: string, cwd: string): string {
 
 export function commandTargetsTrustPath(command: string): boolean {
 	return TRUST_PATH_MUTATION_PATTERN.test(command) && TRUST_PATH_PATTERN.test(command);
+}
+
+export function overwriteAuthorization(prompt: string): boolean | undefined {
+	if (OVERWRITE_DENIAL_PATTERN.test(prompt)) return false;
+	if (OVERWRITE_AUTHORIZATION_PATTERN.test(prompt)) return true;
+	return undefined;
+}
+
+function resolveShellTarget(rawTarget: string, cwd: string): string | undefined {
+	const target = rawTarget.trim().replace(/^(?:"([^"]*)"|'([^']*)')$/, "$1$2");
+	if (!target || target === "-" || /[*?\[]|\$\(|`/.test(target)) return undefined;
+	if (target === "~") return homedir();
+	if (target.startsWith("~/")) return path.join(homedir(), target.slice(2));
+	if (target === "$HOME") return homedir();
+	if (target.startsWith("$HOME/")) return path.join(homedir(), target.slice(6));
+	return path.isAbsolute(target) ? path.normalize(target) : path.resolve(cwd, target);
+}
+
+function shellWords(value: string): string[] {
+	return (value.match(/"[^"]*"|'[^']*'|[^\s]+/g) ?? []).map((word) =>
+		word.replace(/^(?:"([^"]*)"|'([^']*)')$/, "$1$2"),
+	);
+}
+
+export function shellOverwriteTargets(command: string, cwd: string): string[] {
+	const targets = new Set<string>();
+	for (const match of command.matchAll(REDIRECTION_TARGET_PATTERN)) {
+		const resolved = resolveShellTarget(match[1] ?? match[2] ?? match[3] ?? "", cwd);
+		if (resolved) targets.add(resolved);
+	}
+
+	for (const match of command.matchAll(SHELL_FILE_MUTATION_PATTERN)) {
+		const executable = match[1].toLowerCase();
+		const words = shellWords(match[2]);
+		if (executable === "tee") {
+			if (words.some((word) => /^-[^-]*a/.test(word) || word === "--append")) continue;
+			for (const word of words.filter((candidate) => !candidate.startsWith("-"))) {
+				const resolved = resolveShellTarget(word, cwd);
+				if (resolved) targets.add(resolved);
+			}
+			continue;
+		}
+		if (executable === "sed" && !words.some((word) => /^-\w*i\w*$/.test(word) || word.startsWith("--in-place"))) {
+			continue;
+		}
+		if (executable === "perl" && !words.some((word) => /^-\w*i\w*$/.test(word))) continue;
+		const operands = words.filter((word) => !word.startsWith("-"));
+		const rawTarget = operands.at(-1);
+		if (!rawTarget) continue;
+		const resolved = resolveShellTarget(rawTarget, cwd);
+		if (resolved) targets.add(resolved);
+	}
+	return [...targets];
 }
 
 export function blockedCommandReason(command: string): string | undefined {
@@ -167,10 +226,12 @@ export default function safetyGateExtension(pi: ExtensionAPI): void {
 		backedUpPaths.clear();
 		createdPaths.clear();
 		overwriteAuthorized = false;
+		pi.appendEntry("pi-suite-extension-health", { extension: "safety-gate", status: "active" });
 	});
 
 	pi.on("before_agent_start", (event) => {
-		overwriteAuthorized ||= OVERWRITE_AUTHORIZATION_PATTERN.test(event.prompt);
+		const authorization = overwriteAuthorization(event.prompt);
+		if (authorization !== undefined) overwriteAuthorized = authorization;
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -209,6 +270,50 @@ export default function safetyGateExtension(pi: ExtensionAPI): void {
 					};
 				}
 			}
+
+			for (const target of shellOverwriteTargets(command, ctx.cwd)) {
+				if (!existsSync(target)) {
+					createdPaths.add(target);
+					continue;
+				}
+				const targetStat = lstatSync(target);
+				if (targetStat.isSymbolicLink()) {
+					return {
+						block: true,
+						reason: `safety-gate: shell mutation of symbolic-link target ${target} is blocked because the resolved destination cannot be safely preserved`,
+					};
+				}
+				if (!targetStat.isFile()) continue;
+				const currentContent = readFileSync(target, "utf8");
+				if (shouldBlockPreexistingWrite(
+					currentContent,
+					createdPaths.has(target),
+					overwriteAuthorized,
+					process.env.PI_BENCH_CHILD === "1",
+				)) {
+					return {
+						block: true,
+						reason: `safety-gate: shell command would overwrite non-empty pre-existing file ${target} without explicit authorization. Preserve it and use a distinct output filename.`,
+					};
+				}
+				if ([...currentContent.split(/\r?\n/)].some((line) => PROTECTED_LINE_PATTERN.test(line))) {
+					return {
+						block: true,
+						reason: `safety-gate: shell mutation of ${target} is blocked because fixed/human-only lines cannot be verified before execution`,
+					};
+				}
+				if (!backedUpPaths.has(target)) {
+					try {
+						copyFileSync(target, adjacentBackupPath(target));
+						backedUpPaths.add(target);
+					} catch (error) {
+						return {
+							block: true,
+							reason: `safety-gate: could not preserve ${target} before shell modification: ${error instanceof Error ? error.message : String(error)}`,
+						};
+					}
+				}
+			}
 			return undefined;
 		}
 
@@ -222,7 +327,15 @@ export default function safetyGateExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		if (!lstatSync(absolutePath).isSymbolicLink()) {
+		const targetStat = lstatSync(absolutePath);
+		if (targetStat.isSymbolicLink()) {
+			return {
+				block: true,
+				reason: "safety-gate: direct write/edit through a symbolic link is blocked because the resolved destination cannot be safely preserved",
+			};
+		}
+
+		if (targetStat.isFile()) {
 			const currentContent = readFileSync(absolutePath, "utf8");
 			if (
 				event.toolName === "write" &&

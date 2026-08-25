@@ -83,6 +83,13 @@ function prepareUpdatePlanArguments(args: unknown): UpdatePlanInput {
 	return changed ? ({ ...args, ops } as UpdatePlanInput) : (args as UpdatePlanInput);
 }
 
+export function shouldInjectPlanGuidance(prompt: string, benchChild: boolean): boolean {
+	if (!benchChild) return true;
+	const checklistItems = prompt.match(/^\s*(?:[-*]|\d+[.)])\s+\S+/gm)?.length ?? 0;
+	const artifactPaths = new Set(prompt.match(/\/tmp_workspace\/[A-Za-z0-9_./-]+/g) ?? []).size;
+	return checklistItems >= 3 || artifactPaths >= 2 || prompt.length >= 800;
+}
+
 function cloneItem(item: PlanItem): PlanItem {
 	return {
 		content: item.content,
@@ -279,6 +286,7 @@ function applyOperation(phases: PlanPhase[], op: PlanOperationInput): string | u
 
 export default function updatePlanExtension(pi: ExtensionAPI): void {
 	let phases: PlanPhase[] = [];
+	let guidanceInjected = false;
 
 	function restoreFromEntries(ctx: ExtensionContext): void {
 		phases = [];
@@ -297,11 +305,17 @@ export default function updatePlanExtension(pi: ExtensionAPI): void {
 		updatePlanUi(ctx, phases);
 	}
 
-	pi.on("session_start", async (_event, ctx) => restoreFromEntries(ctx));
+	pi.on("session_start", async (_event, ctx) => {
+		guidanceInjected = false;
+		pi.appendEntry("pi-suite-extension-health", { extension: "update-plan", status: "active" });
+		restoreFromEntries(ctx);
+	});
 	pi.on("session_tree", async (_event, ctx) => restoreFromEntries(ctx));
 
-	pi.on("before_agent_start", async () => {
+	pi.on("before_agent_start", async (event) => {
 		if (!pi.getActiveTools().includes(PLAN_TOOL_NAME)) return;
+		if (guidanceInjected || !shouldInjectPlanGuidance(event.prompt, process.env.PI_BENCH_CHILD === "1")) return;
+		guidanceInjected = true;
 		return {
 			message: {
 				customType: "update-plan-guidance",

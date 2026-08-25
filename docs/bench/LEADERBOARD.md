@@ -61,7 +61,7 @@ Do not try to “look like OpenClaw” by stuffing OpenClaw skills into Pi. Grad
 
 ### Pi RPC runner contract
 
-- Pin Pi `>=0.80.4` (this branch uses `0.84.3`) and wait for `agent_settled`, not `agent_end`, before starting the next conversation turn.
+- Pin Pi `>=0.84.3` and wait for `agent_settled`, not `agent_end`, before starting the next conversation turn.
 - Use `streamingBehavior: "followUp"` for intentional overlap; otherwise serialize prompts. Treat `Agent is already processing` as a runner lifecycle error, not a model failure.
 - Record outer task and per-prompt timeouts independently. On timeout, abort and settle or replace the Pi process before a multi-role handoff.
 - Keep monitoring lifecycle independent from the batch worker if post-run patrol is required; a worker-owned loop ending with the batch is expected process behavior.
