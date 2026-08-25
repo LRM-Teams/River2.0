@@ -2981,9 +2981,6 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `sandbox/` | Sandboxed tool execution | Tool operations |
 | `gondolin/` | Route built-in tools and `!` commands into a Gondolin micro-VM | Tool operations, built-in tool overrides, `on("user_bash")` |
 | `subagent/` | Spawn sub-agents | `registerTool`, `exec` |
-| **Games** |||
-| `space-invaders.ts` | Space Invaders game | `registerCommand`, `ui.custom` |
-| `doom-overlay/` | Doom in overlay | `ui.custom` with overlay |
 | **Providers** |||
 | `custom-provider-anthropic/` | Custom Anthropic proxy | `registerProvider` |
 | `custom-provider-gitlab-duo/` | GitLab Duo integration | `registerProvider` with OAuth |

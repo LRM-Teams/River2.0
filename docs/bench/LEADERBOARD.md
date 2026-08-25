@@ -67,16 +67,8 @@ These cost tokens or steal the turn budget and do not help graders.
 
 | Module | Why drop |
 |---|---|
-| `tps.ts` | Notifications. No score signal. |
-| `prompt-url-widget.ts` | Editor chrome. |
 | `autogoal.ts` | Second autonomous loop. Conflicts with the bench runner and with autoresearch. |
-| `goal-mode.ts` | Third loop. Overlaps autogoal. |
-| `pi-suite-repair.ts` | Install helper. Not a task tool. |
-| `prompts/{cl,commit,is,pr,review,wr}.md` | Team git workflows. Wrong prior for email / search / safety tasks. |
 | `skills/skill-creator` | Meta skill authoring. |
-| `skills/add-llm-provider` | Setup only. |
-| `skills/image-to-editable-ppt-slide` | Narrow. Only turn on for a creative-synthesis replay if needed. |
-| `skills/pi-skill` | Long capability dump. Inflates context. |
 | `pi-subagents` | Extra agents burn the 300–1200s budget; WildClaw tasks are single-agent. |
 | `pi-mono-figma` | Already off. Keep off. |
 | `pi-autoresearch` | Offline only. |
@@ -99,7 +91,7 @@ These cost tokens or steal the turn budget and do not help graders.
 | `pi-memory` | Too many tools; detached worker already default-off | Env `PI_MEMORY_BENCH=1`: register `memory_read` + lexical `memory_search` only. Inject at most one compact MEMORY.md. |
 | `update-plan` | Prompt injection on every 3-step task | Only inject when the user/task text is long-horizon (email rounds, 50-paper crawl). |
 | Compaction | WildClaw is long-horizon | Keep Pi auto-compact; do not also run autogoal session-switch. |
-| Companion install | Suite + standalone duplicates | Leaderboard image installs companions once, never via `/pi-suite-repair`. |
+| Companion install | Suite + standalone duplicates | Leaderboard image installs companions once; no runtime installer is loaded. |
 
 ## Recommended two-phase setup
 

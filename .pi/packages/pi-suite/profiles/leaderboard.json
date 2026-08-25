@@ -23,21 +23,8 @@
 		],
 		"disable": [
 			"extensions/bench.ts",
-			"extensions/tps.ts",
-			"extensions/prompt-url-widget.ts",
 			"extensions/autogoal.ts",
-			"extensions/goal-mode.ts",
-			"extensions/pi-suite-repair.ts",
-			"prompts/cl.md",
-			"prompts/commit.md",
-			"prompts/is.md",
-			"prompts/pr.md",
-			"prompts/review.md",
-			"prompts/wr.md",
-			"skills/skill-creator",
-			"skills/add-llm-provider",
-			"skills/image-to-editable-ppt-slide",
-			"skills/pi-skill"
+			"skills/skill-creator"
 		],
 		"memoryTools": ["memory_read", "memory_search"],
 		"doNotInstallDuringEval": ["pi-autoresearch", "pi-subagents", "pi-mono-figma"]

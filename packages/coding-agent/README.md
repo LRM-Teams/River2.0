@@ -368,8 +368,6 @@ Place in `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, or `.agents/
 
 ### Extensions
 
-<p align="center"><img src="docs/images/doom-extension.png" alt="Doom Extension" width="600"></p>
-
 TypeScript modules that extend pi with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
 
 ```typescript
@@ -393,7 +391,6 @@ The default export can also be `async`. pi waits for async extension factories b
 - SSH and sandbox execution
 - MCP server integration
 - Make pi look like Claude Code
-- Games while waiting (yes, Doom runs)
 - ...anything you can dream up
 
 Place in `~/.pi/agent/extensions/`, `.pi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).

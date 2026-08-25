@@ -1,4 +1,4 @@
-# Runs the repo's /is prompt against an issue when the `pi-analyze` label is added
+# Runs the repo's issue-analysis prompt when the `pi-analyze` label is added
 # or when a staff member comments `@issuron analyze` anywhere on an issue.
 #
 # Comment triggers can include one `#run-on-*` tag anywhere in the text:
@@ -41,9 +41,7 @@
 # those dependencies preinstalled or installable by the setup steps.
 #
 # The session runs in a high-entropy checkout directory so the recorded cwd is
-# a unique string. Import the session into a local checkout with the
-# /ir extension command (.pi/extensions/import-repro.ts):
-#   pi "/ir <gist-id | gist-url | pi.dev/session URL>"
+# a unique string.
 
 name: Issue Analysis
 
@@ -352,7 +350,7 @@ jobs:
               fs.chmodSync(authPath, 0o600);
             }
 
-      - name: Run pi /is
+      - name: Run Pi issue analysis
         id: run_pi
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -372,7 +370,11 @@ jobs:
             const sessionDir = path.join(outDir, 'session');
             fs.mkdirSync(sessionDir, { recursive: true });
 
-            let prompt = `/is ${process.env.ISSUE_URL}`;
+            const promptTemplate = fs.readFileSync(
+              path.join(workdir, '.github', 'prompts', 'issue-analysis.md'),
+              'utf8',
+            );
+            let prompt = promptTemplate.replace('$ARGUMENTS', process.env.ISSUE_URL);
             if (process.env.EXTRA_INSTRUCTIONS) {
               prompt += '\n\nAdditional instructions from @issuron analyze comment:\n';
               prompt += process.env.EXTRA_INSTRUCTIONS;
@@ -412,7 +414,7 @@ jobs:
             await new Promise((resolve) => output.end(resolve));
 
             if (exitCode !== 0) {
-              throw new Error(`pi /is failed with exit code ${exitCode}`);
+              throw new Error(`Pi issue analysis failed with exit code ${exitCode}`);
             }
 
       - name: Persist refreshed auth.json

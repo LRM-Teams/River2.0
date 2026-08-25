@@ -59,7 +59,6 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `hidden-thinking-label.ts` | Customizes the collapsed thinking label via `ctx.ui.setHiddenThinkingLabel()` |
 | `working-indicator.ts` | Customizes the streaming working indicator via `ctx.ui.setWorkingIndicator()` |
 | `model-status.ts` | Shows model changes in status bar via `model_select` hook |
-| `tic-tac-toe.ts` | Tic-tac-toe vs the agent with `executionMode: "sequential"` tools to prevent race conditions on shared cursor state |
 | `send-user-message.ts` | Demonstrates `pi.sendUserMessage()` for sending user messages from extensions |
 | `timed-confirm.ts` | Demonstrates AbortSignal for auto-dismissing `ctx.ui.confirm()` and `ctx.ui.select()` dialogs |
 | `rpc-demo.ts` | Exercises all RPC-supported extension UI methods; pair with [`examples/rpc-extension-ui.ts`](../rpc-extension-ui.ts) |
@@ -72,7 +71,6 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `custom-header.ts` | Custom header via `ctx.ui.setHeader()` |
 | `overlay-test.ts` | Test overlay compositing with inline text inputs and edge cases |
 | `overlay-qa-tests.ts` | Comprehensive overlay QA tests: anchors, margins, stacking, overflow, animation |
-| `doom-overlay/` | DOOM game running as an overlay at 35 FPS (demonstrates real-time game rendering) |
 | `shutdown-command.ts` | Adds `/quit` command demonstrating `ctx.shutdown()` |
 | `reload-runtime.ts` | Adds `/reload-runtime` and `reload_runtime` tool showing safe reload flow |
 | `interactive-shell.ts` | Run interactive commands (vim, htop) with full terminal via `user_bash` hook |

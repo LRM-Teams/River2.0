@@ -2,7 +2,7 @@
 
 Slim Pi suite for WildClawBench / Claw-Eval. Default install profile is Lenovo ModelFactory DeepSeek; the bench profile (`TEAM_PROFILE=zhizengzeng`) provisions GPT-5.5 as the main model plus Gemini vision tools.
 
-Team toys and UI diagnostics, autogoal / goal-mode, git prompts, and subagents are **not** loaded on this branch. See `docs/bench/LEADERBOARD.md`.
+Evolution helpers and subagents are **not** loaded during evaluation. See `docs/bench/LEADERBOARD.md`.
 
 ## Install
 
@@ -63,16 +63,14 @@ Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
 
 Not installed or loaded:
 
-- TPS and prompt URL widget
-- autogoal, goal-mode, pi-suite-repair
-- team git prompts and skill-creator / PPT / pi-skill dumps
+- autogoal and skill-creator (repository-only evolution helpers)
 - `pi-subagents`, `pi-mcp-adapter`, `pi-mono-figma`
 
 Do not also list those companions inside this package manifest; duplicates conflict.
 
-## Autogoal (not loaded on this branch; leftover from main)
+## Autogoal (evolution only)
 
-`/autogoal <task>` starts a bounded autonomous coding run. It persists the objective, auto-continues with loop budgets, checkpoints at high context usage, and can continue in a fresh session when the context window gets tight.
+The repository-only evolve profile can load `/autogoal <task>` for bounded autonomous coding runs. It is excluded from evaluation and from the published leaderboard package.
 
 Useful commands:
 
@@ -156,31 +154,6 @@ Useful commands:
 ```
 
 Memory evolution is local-only by default and does not configure a shared remote. If a user wants backup sync, set `PI_EVOLUTION_REMOTE` to their own private repo before bootstrap/setup, or add a personal remote later with `git -C ~/.pi/agent/evolution remote add origin <url>`. Set `PI_EVOLUTION_AUTO_PUSH=1` only if automatic remote sync is desired.
-
-## Review And Commit Workflows
-
-Use `/review [target] [--fix] [--comment] [--summary]` to inspect current diffs, branch ranges, or PRs with findings first and a verdict last. It is local-only by default: GitHub comments are drafted first and posted only after explicit confirmation.
-
-Use `/commit [message|split|pr|apply]` to inspect current changes, warn about mixed concerns, draft commit messages, suggest split points, or draft PR text. It does not stage, commit, or push unless you explicitly confirm the exact action.
-
-These workflows are prompt-template workflows only. They do not merge read behavior, add tool discovery, rewrite memory/skills, or run as hidden background processes.
-
-## Goal Mode (not loaded on this branch; leftover from main)
-
-Use `/goal <objective>` to keep Pi working on one task until it is verified complete. Goal mode injects hidden task context, enables a `goal` tool for pause/drop/resume/completion, tracks token/time budget usage, and auto-continues between turns instead of stopping at a minimal implementation.
-
-Useful commands:
-
-```bash
-/goal <objective>
-/goal show
-/goal pause
-/goal resume
-/goal drop
-/goal budget <tokens|off>
-/goal auto on
-/goal auto off
-```
 
 ## Update
 
