@@ -32,7 +32,7 @@ Reward-only: never read `bench/tasks/*/grade.sh` or quarantine dirs; evidence is
 ## Off Limits
 
 - Benchmark task prompts, graders, and ground truth
-- Enabling pet / snake / TPS / URL widget / Figma during eval
+- Enabling TPS / URL widget / Figma during eval
 - Running autogoal, goal-mode, and autoresearch at the same time
 - Publishing `@jhp/pi-memory` (scope is not ours)
 

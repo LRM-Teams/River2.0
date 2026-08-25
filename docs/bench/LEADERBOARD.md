@@ -67,8 +67,6 @@ These cost tokens or steal the turn budget and do not help graders.
 
 | Module | Why drop |
 |---|---|
-| `pet.ts` | Toy. Noise in the system prompt and UI. |
-| `snake.ts` | Game. Same. |
 | `tps.ts` | Notifications. No score signal. |
 | `prompt-url-widget.ts` | Editor chrome. |
 | `autogoal.ts` | Second autonomous loop. Conflicts with the bench runner and with autoresearch. |

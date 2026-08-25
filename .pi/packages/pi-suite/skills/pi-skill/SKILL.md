@@ -238,21 +238,10 @@ Goal mode is provided by `goal-mode.ts`.
 - It keeps phased task state in session history, auto-promotes the next pending task to `in_progress`, and shows widget/footer progress when active.
 - Commands: `/plan-status` shows the current plan; `/plan-clear` clears it.
 
-## Pet Companion
-
-The pet extension provides a small terminal companion and durable profile.
-
-- Command: `/pet`.
-- Subcommands include `on`, `off`, `cat`, `dog`, `fox`, `bot`, `name`, `mood`, `checkin`, `feed`, `bag`, `equip`, `unequip`, `position`, `reset`, and `ask`.
-- `/pet ask <question>` answers from current context without saving the answer into the main session.
-- Item drops can happen from tool usage, memory events, and daily check-ins, with pity counters.
-- Pet profile/inventory is mirrored at `~/.pi/agent/pet-profile.json` so equipment survives `/new` and future sessions.
-
 ## UI And Utility Extensions
 
 - `update-plan.ts`: registers `update_plan`, `/plan-status`, and `/plan-clear` for visible per-session execution planning.
 - `prompt-url-widget.ts`: detects PR/issue prompt templates, fetches GitHub metadata with `gh`, shows a widget, and names the session when possible.
-- `snake.ts`: `/snake` opens a TUI snake game; `Esc` pauses/saves, `q` quits, arrows/WASD move.
 - `tps.ts`: after each assistant run, shows tokens-per-second and token usage details.
 - `pi-suite-repair.ts`: registers `/pi-suite-repair` and startup reminders for missing companion Pi packages declared by the suite.
 - `memory-curator.ts`: deprecated compatibility notice only; external curation is managed by pi-memory service tools.

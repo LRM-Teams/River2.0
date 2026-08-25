@@ -24,7 +24,6 @@ Extensions are TypeScript modules that extend pi's behavior. They can subscribe 
 - Interactive tools (questions, wizards, custom dialogs)
 - Stateful tools (todo lists, connection pools)
 - External integrations (file watchers, webhooks, CI triggers)
-- Games while you wait (see `snake.ts` example)
 
 See [examples/extensions/](../examples/extensions/) for working implementations.
 
@@ -2983,7 +2982,6 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `gondolin/` | Route built-in tools and `!` commands into a Gondolin micro-VM | Tool operations, built-in tool overrides, `on("user_bash")` |
 | `subagent/` | Spawn sub-agents | `registerTool`, `exec` |
 | **Games** |||
-| `snake.ts` | Snake game | `registerCommand`, `ui.custom`, keyboard handling |
 | `space-invaders.ts` | Space Invaders game | `registerCommand`, `ui.custom` |
 | `doom-overlay/` | Doom in overlay | `ui.custom` with overlay |
 | **Providers** |||

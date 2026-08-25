@@ -335,7 +335,7 @@ Base URL: $TEAM_BASE_URL
 Model: $TEAM_MODEL
 Companions: pi-web-access, @lebronj/pi-lsp
 Suite extensions: update_plan, bench-control, gemini_vision/video_frames/image_crop/media_probe, safety-gate
-Not installed: pet/snake/tps, autogoal/goal-mode, pi-subagents, Figma
+Not installed: tps, autogoal/goal-mode, pi-subagents, Figma
 Bench tip: export PI_MEMORY_FINALIZE=0 PI_MEMORY_SKILL_DRAFTS=off in the harness.
 Run: pi
 

@@ -2,7 +2,7 @@
 
 Slim Pi suite for WildClawBench / Claw-Eval. Default install profile is Lenovo ModelFactory DeepSeek; the bench profile (`TEAM_PROFILE=zhizengzeng`) provisions GPT-5.5 as the main model plus Gemini vision tools.
 
-Team toys (pet / snake / TPS), autogoal / goal-mode, git prompts, and subagents are **not** loaded on this branch. See `docs/bench/LEADERBOARD.md`.
+Team toys and UI diagnostics, autogoal / goal-mode, git prompts, and subagents are **not** loaded on this branch. See `docs/bench/LEADERBOARD.md`.
 
 ## Install
 
@@ -63,7 +63,7 @@ Writes the `zhizengzeng` provider (`https://api.zhizengzeng.com/v1`) with:
 
 Not installed or loaded:
 
-- pet, snake, TPS, prompt URL widget
+- TPS and prompt URL widget
 - autogoal, goal-mode, pi-suite-repair
 - team git prompts and skill-creator / PPT / pi-skill dumps
 - `pi-subagents`, `pi-mcp-adapter`, `pi-mono-figma`
