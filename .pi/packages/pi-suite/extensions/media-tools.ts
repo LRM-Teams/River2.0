@@ -265,10 +265,15 @@ export default function (pi: ExtensionAPI) {
 	let consecutiveGatewayFailures = 0;
 	let circuitOpenUntil = 0;
 
-	pi.on("session_start", () => {
+	pi.on("session_start", async () => {
 		consecutiveGatewayFailures = 0;
 		circuitOpenUntil = 0;
-		pi.appendEntry("pi-suite-extension-health", { extension: "media-tools", status: "active" });
+		const config = await loadConfig();
+		const hasApiKey = Boolean(process.env.ZHIZENGZENG_API_KEY || config.apiKey);
+		pi.appendEntry("pi-suite-extension-health", {
+			extension: "media-tools",
+			status: hasApiKey ? "active" : "degraded: gemini gateway api key is missing; vision tools will fail",
+		});
 	});
 
 	const callVision = async (

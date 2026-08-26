@@ -10,6 +10,16 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const SEARCH_TOOL_NAMES = new Set(["web_search", "websearch", "search", "search_query", "internet_search"]);
+// Local/lexical tools that contain "search" but never hit the network.
+const NON_WEB_SEARCH_HINT = /(?:memory|file|code|symbol|grep|glob|local|replace|lsp)/i;
+
+export function isWebSearchTool(name: string): boolean {
+	const override = process.env.PI_BENCH_SEARCH_TOOLS;
+	if (override) return override.split(",").map((tool) => tool.trim()).includes(name);
+	if (SEARCH_TOOL_NAMES.has(name)) return true;
+	if (NON_WEB_SEARCH_HINT.test(name)) return false;
+	return /(?:^|_)search(?:es|_query|_queries)?$/i.test(name);
+}
 const DEFAULT_FINALIZE_SECONDS = 90;
 const CHECKPOINT_FRACTIONS = [0.25, 0.5, 0.75] as const;
 const MINIMUM_PI_VERSION = "0.84.3";
@@ -77,7 +87,7 @@ export function isSupportedPiVersion(version: string): boolean {
 }
 
 export function finalizationBlockReason(toolName: string, input: Record<string, unknown>): string | undefined {
-	if (SEARCH_TOOL_NAMES.has(toolName)) return "new searches are blocked";
+	if (isWebSearchTool(toolName)) return "new searches are blocked";
 	if (toolName === "gemini_vision") return "new remote vision calls are blocked";
 	if (toolName !== "bash") return undefined;
 	const command = String(input.command ?? "");
@@ -90,8 +100,10 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function requestedArtifactPaths(prompt: string): string[] {
-	const matches = prompt.match(/\/tmp_workspace\/[A-Za-z0-9_./-]+/g) ?? [];
+export function requestedArtifactPaths(prompt: string, cwd = "/tmp_workspace"): string[] {
+	const escapedCwd = cwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const pattern = new RegExp(`(?:${escapedCwd}|/tmp_workspace)/[A-Za-z0-9_./-]+`, "g");
+	const matches = prompt.match(pattern) ?? [];
 	return [...new Set(matches.filter((candidate) => /\.[A-Za-z0-9]{1,8}$/.test(candidate)))].slice(0, 8);
 }
 
@@ -239,7 +251,7 @@ export default function benchControlExtension(pi: ExtensionAPI): void {
 				? promptSearchLimit
 				: Math.min(hardSearchLimit, promptSearchLimit);
 		}
-		artifactPaths = [...new Set([...artifactPaths, ...requestedArtifactPaths(event.prompt)])];
+		artifactPaths = [...new Set([...artifactPaths, ...requestedArtifactPaths(event.prompt, sessionCwd)])];
 		const dynamicRules: string[] = [];
 		if (artifactPaths.length > 0) {
 			dynamicRules.push(
@@ -265,7 +277,7 @@ export default function benchControlExtension(pi: ExtensionAPI): void {
 				reason: `bench-control: finalization window is active; ${finalizationReason}. Write and verify requested artifacts now`,
 			};
 		}
-		if (!SEARCH_TOOL_NAMES.has(event.toolName) || hardSearchLimit === undefined) return undefined;
+		if (!isWebSearchTool(event.toolName) || hardSearchLimit === undefined) return undefined;
 
 		const queryCount = countSearchQueries(event.input);
 		if (queryCount === 0) return undefined;

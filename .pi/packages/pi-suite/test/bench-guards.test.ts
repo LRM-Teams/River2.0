@@ -7,13 +7,17 @@ import {
 	countSearchQueries,
 	finalizationBlockReason,
 	isSupportedPiVersion,
+	isWebSearchTool,
 	parseSearchLimit,
+	requestedArtifactPaths,
 } from "../extensions/bench-control.ts";
 import { contactSheetLayout, retryDelayMs } from "../extensions/media-tools.ts";
 import {
+	backupPathFor,
 	blockedCommandReason,
 	commandTargetsTrustPath,
 	findSecretFindings,
+	isCredentialProbe,
 	overwriteAuthorization,
 	protectedLinesPreserved,
 	shellOverwriteTargets,
@@ -70,6 +74,13 @@ test("preserves human-only and fixed lines exactly", () => {
 	);
 });
 
+test("bug-fix comments are not treated as immutable fixed lines", () => {
+	const original = "# fixed the off-by-one bug\nvalue = 1\n";
+	assert.equal(protectedLinesPreserved(original, "value = 2\n"), true);
+	const schedule = "09:00 Standup (fixed slot)\n10:00 Focus\n";
+	assert.equal(protectedLinesPreserved(schedule, "10:00 Focus\n"), false);
+});
+
 test("protects non-empty pre-existing benchmark files unless overwrite is explicit", () => {
 	assert.equal(shouldBlockPreexistingWrite("original summary", false, false, true), true);
 	assert.equal(shouldBlockPreexistingWrite("original summary", false, true, true), false);
@@ -84,6 +95,56 @@ test("overwrite authorization is explicit and negation-aware", () => {
 	assert.equal(overwriteAuthorization("Do not overwrite the existing summary file."), false);
 	assert.equal(overwriteAuthorization("不要覆盖已有文件，创建新的摘要。"), false);
 	assert.equal(overwriteAuthorization("Update the analysis."), undefined);
+});
+
+test("debug and repair tasks authorize in-place source edits", () => {
+	assert.equal(overwriteAuthorization("Fix the injected bugs in the codebase."), true);
+	assert.equal(overwriteAuthorization("定位并修复所有被注入的 Bug，使测试脚本能产生正确结果。"), true);
+	assert.equal(overwriteAuthorization("Debug the failing inference script."), true);
+	assert.equal(overwriteAuthorization("Summarize the meeting notes."), undefined);
+});
+
+test("credential probe blocks full env dumps but allows env-prefixed commands", () => {
+	// Full dumps, piped dumps, and secret-named lookups are probes.
+	assert.equal(isCredentialProbe("env"), true);
+	assert.equal(isCredentialProbe("env | grep -E 'JUDGE|MODEL'"), true);
+	assert.equal(isCredentialProbe("printenv"), true);
+	assert.equal(isCredentialProbe("printenv JUDGE_MODEL_KEY"), true);
+	// Legitimate idioms are not probes.
+	assert.equal(isCredentialProbe("env CUDA_VISIBLE_DEVICES=0 python train.py"), false);
+	assert.equal(isCredentialProbe("printenv PATH"), false);
+});
+
+test("web search tool detection covers companions and skips local search tools", () => {
+	assert.equal(isWebSearchTool("web_search"), true);
+	assert.equal(isWebSearchTool("brave_search"), true);
+	assert.equal(isWebSearchTool("google_search"), true);
+	assert.equal(isWebSearchTool("memory_search"), false);
+	assert.equal(isWebSearchTool("code_search"), false);
+	assert.equal(isWebSearchTool("search_replace"), false);
+	assert.equal(isWebSearchTool("read"), false);
+});
+
+test("artifact tracking honors the session cwd in addition to /tmp_workspace", () => {
+	assert.deepEqual(
+		requestedArtifactPaths("Write the report to /tmp_workspace/results/results.md", "/workspace/run1"),
+		["/tmp_workspace/results/results.md"],
+	);
+	assert.deepEqual(
+		requestedArtifactPaths("Save output to /workspace/run1/out/answer.json please", "/workspace/run1"),
+		["/workspace/run1/out/answer.json"],
+	);
+});
+
+test("backups never land inside the workspace", () => {
+	const backupRoot = mkdtempSync(path.join(tmpdir(), "pi-suite-backup-"));
+	try {
+		const backup = backupPathFor("/tmp_workspace/results/results.md", backupRoot);
+		assert.ok(backup.startsWith(backupRoot));
+		assert.ok(!backup.startsWith("/tmp_workspace/"));
+	} finally {
+		rmSync(backupRoot, { recursive: true, force: true });
+	}
 });
 
 test("detects common shell overwrite targets", () => {
